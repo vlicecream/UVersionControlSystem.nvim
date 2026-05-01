@@ -70,15 +70,15 @@ return {
 ```vim
 :UVCS                    " Open dashboard
 :UVCS dashboard          " Open dashboard
-:UVCS changes            " Alias of dashboard
-:UVCS changelists        " Alias of dashboard
 :UVCS checkout           " p4 edit current file
+:UVCS add                " p4 add current file
+:UVCS revert             " p4 revert current file
 :UVCS commit             " Open visual commit UI
-:UVCS login              " Interactive p4 login
 :UVCS debug vcs          " Print diagnostics
-:UVCS debug p4-changes   " Print pending changelists
 :checkhealth uvcs        " Environment diagnostics
 ```
+
+The user-facing command surface stays intentionally small. Changelists and shelves are handled inside the dashboard UI rather than through extra top-level commands.
 
 ### Configuration
 
@@ -160,15 +160,15 @@ return {
 ```vim
 :UVCS                    " 打开 dashboard
 :UVCS dashboard          " 打开 dashboard
-:UVCS changes            " dashboard 别名
-:UVCS changelists        " dashboard 别名
 :UVCS checkout           " 对当前文件执行 p4 edit
+:UVCS add                " 对当前文件执行 p4 add
+:UVCS revert             " 对当前文件执行 p4 revert
 :UVCS commit             " 打开可视化提交界面
-:UVCS login              " 交互式 p4 login
 :UVCS debug vcs          " 输出诊断信息
-:UVCS debug p4-changes   " 输出 pending changelist
 :checkhealth uvcs        " 环境诊断
 ```
+
+对外命令面保持精简。changelist 和 shelf 仍然会在 dashboard 里展示和处理，但不再额外暴露成顶层命令。
 
 ### 配置
 

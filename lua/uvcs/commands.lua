@@ -33,23 +33,44 @@ function M.dashboard()
 	uvcs.open_dashboard("all")
 end
 
+local function current_path()
+	local path = vim.api.nvim_buf_get_name(0)
+	if path == "" then
+		vim.notify("UVCS: no file in current buffer", vim.log.levels.WARN)
+		return nil
+	end
+
+	return path
+end
+
+local function current_provider(path)
+	local provider = uvcs.detect_for_path(path)
+	if not provider then
+		vim.notify("UVCS: no VCS provider detected for this file", vim.log.levels.WARN)
+		return nil
+	end
+
+	if provider.name() ~= "p4" then
+		vim.notify("UVCS: command is a no-op for " .. provider.name():upper(), vim.log.levels.INFO)
+		return nil
+	end
+
+	return provider
+end
+
 function M.commit()
 	uvcs.open_commit_ui(nil, nil)
 end
 
 function M.checkout()
-	local path = vim.api.nvim_buf_get_name(0)
-	if path == "" then
-		return vim.notify("UVCS: no file in current buffer", vim.log.levels.WARN)
+	local path = current_path()
+	if not path then
+		return
 	end
 
-	local provider = uvcs.detect_for_path(path)
+	local provider = current_provider(path)
 	if not provider then
-		return vim.notify("UVCS: no VCS provider detected for this file", vim.log.levels.WARN)
-	end
-
-	if provider.name() ~= "p4" then
-		return vim.notify("UVCS: checkout is a no-op for " .. provider.name():upper(), vim.log.levels.INFO)
+		return
 	end
 
 	local ok, err = provider.checkout(path)
@@ -58,6 +79,71 @@ function M.checkout()
 		vim.notify("UVCS: p4 edit " .. vim.fn.fnamemodify(path, ":t"), vim.log.levels.INFO)
 	else
 		vim.notify("UVCS checkout failed: " .. tostring(err), vim.log.levels.ERROR)
+	end
+end
+
+function M.add()
+	local path = current_path()
+	if not path then
+		return
+	end
+
+	local provider = current_provider(path)
+	if not provider then
+		return
+	end
+
+	if not provider.add_file then
+		return vim.notify("UVCS: add is not available for this provider", vim.log.levels.WARN)
+	end
+
+	local root = project.find_project_root(path)
+	local ok, err = provider.add_file(path, root)
+	if ok then
+		vim.notify("UVCS: p4 add " .. vim.fn.fnamemodify(path, ":t"), vim.log.levels.INFO)
+	else
+		vim.notify("UVCS add failed: " .. tostring(err), vim.log.levels.ERROR)
+	end
+end
+
+function M.revert()
+	local path = current_path()
+	if not path then
+		return
+	end
+
+	local provider = current_provider(path)
+	if not provider then
+		return
+	end
+
+	if not provider.do_revert then
+		return vim.notify("UVCS: revert is not available for this provider", vim.log.levels.WARN)
+	end
+
+	local message = "UVCS: revert " .. vim.fn.fnamemodify(path, ":t") .. "?\n\nThis discards local changes."
+	if vim.bo[0].modified then
+		message = message .. "\n\nCurrent buffer also has unsaved changes."
+	end
+
+	local confirm = vim.fn.confirm(message, "&Revert\n&Cancel", 2, "Warning")
+	if confirm ~= 1 then
+		return
+	end
+
+	local root = project.find_project_root(path)
+	local ok, err = provider.do_revert(path, root)
+	if ok then
+		if vim.api.nvim_buf_is_valid(0) then
+			vim.bo[0].readonly = vim.fn.filewritable(path) ~= 1
+			pcall(vim.cmd, "checktime")
+			if not vim.bo[0].modified and vim.fn.filereadable(path) == 1 then
+				pcall(vim.cmd, "silent edit")
+			end
+		end
+		vim.notify("UVCS: reverted " .. vim.fn.fnamemodify(path, ":t"), vim.log.levels.INFO)
+	else
+		vim.notify("UVCS revert failed: " .. tostring(err), vim.log.levels.ERROR)
 	end
 end
 
@@ -147,11 +233,10 @@ UVCS commands:
 
   :UVCS              Open VCS dashboard
   :UVCS dashboard    Open VCS dashboard
-  :UVCS changes      Alias of dashboard
-  :UVCS changelists  Alias of dashboard
   :UVCS checkout     Checkout current file (p4 edit)
+  :UVCS add          Add current file (p4 add)
+  :UVCS revert       Revert current file (p4 revert)
   :UVCS commit       Open visual commit UI
-  :UVCS login        Interactive P4 login
   :UVCS debug        Debug subcommands
   :UVCS help         Show this help
 ]])
@@ -162,7 +247,6 @@ function M.debug_help()
 UVCS debug commands:
 
   :UVCS debug vcs         Print VCS diagnostics
-  :UVCS debug p4-changes  Print pending P4 changelists
   :UVCS debug help        Show this help
 ]])
 end
@@ -181,8 +265,6 @@ local function dispatch_debug(tail)
 	local handlers = {
 		help = M.debug_help,
 		vcs = M.debug,
-		["p4-changes"] = M.pending_changelists,
-		p4changes = M.pending_changelists,
 	}
 
 	local handler = handlers[sub]
@@ -204,11 +286,10 @@ function M.dispatch(args)
 	local handlers = {
 		help = M.help,
 		dashboard = M.dashboard,
-		changes = M.dashboard,
-		changelists = M.dashboard,
 		checkout = M.checkout,
+		add = M.add,
+		revert = M.revert,
 		commit = M.commit,
-		login = M.login,
 		debug = function()
 			dispatch_debug(tail)
 		end,
@@ -231,17 +312,15 @@ function M.register()
 		complete = function(arglead, cmdline, cursorpos)
 			local user_items = {
 				"dashboard",
-				"changes",
-				"changelists",
 				"checkout",
+				"add",
+				"revert",
 				"commit",
-				"login",
 				"debug",
 				"help",
 			}
 			local debug_items = {
 				"vcs",
-				"p4-changes",
 				"help",
 			}
 
