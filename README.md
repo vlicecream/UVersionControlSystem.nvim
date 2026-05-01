@@ -1,6 +1,6 @@
 # UVersionControlSystem.nvim
 
-Unreal Engine VCS companion for Neovim.
+Unreal Engine version-control companion for Neovim.
 
 [English](#english) | [中文](#中文)
 
@@ -8,15 +8,25 @@ Unreal Engine VCS companion for Neovim.
 
 ## English
 
-`UVersionControlSystem.nvim` owns the Unreal-facing source-control layer:
+`UVersionControlSystem.nvim` is the VCS layer in the U-series stack.
+
+It focuses on:
 
 - Perforce workspace detection
 - checkout / add / revert
-- readonly edit prompts
-- pending changelists and shelves
-- visual dashboard and commit UI
+- readonly save prompts
+- dashboard for local files and pending changelists
+- visual commit UI
 
-It is designed to work standalone, or as the VCS companion for `UCore.nvim`.
+The top-level command surface stays intentionally small. Changelists, diffs, submit flow, and shelf-adjacent workflow live inside the dashboard and commit UI rather than as extra public commands.
+
+### Features
+
+- detect Unreal project roots and matching P4 workspace
+- prompt on readonly save and offer `p4 edit`
+- `:UVCS checkout`, `:UVCS add`, `:UVCS revert`, `:UVCS commit`
+- dashboard for opened files, local candidates, and pending changelists
+- commit window with file selection, message editing, diff, revert, and submit
 
 ### Requirements
 
@@ -26,12 +36,116 @@ It is designed to work standalone, or as the VCS companion for `UCore.nvim`.
 
 ### Installation
 
+#### Recommended Stack
+
+```lua
+return {
+  {
+    "vlicecream/UTreeSitter.nvim",
+    main = "utreesitter",
+    lazy = false,
+    dependencies = {
+      {
+        "nvim-treesitter/nvim-treesitter",
+        build = ":TSUpdate",
+        opts = function(_, opts)
+          opts = opts or {}
+          opts.auto_install = true
+          opts.indent = { enable = true }
+          return opts
+        end,
+      },
+    },
+    opts = {},
+  },
+
+  {
+    "vlicecream/UVersionControlSystem.nvim",
+    main = "uvcs",
+    lazy = false,
+    opts = {
+      enable = true,
+      prompt_on_readonly_save = true,
+      provider = "auto",
+      p4 = {
+        command = "p4",
+        -- port = "127.0.0.1:1666",
+        -- user = "YourUser",
+        -- client = "YourWorkspace",
+      },
+    },
+  },
+
+  {
+    "vlicecream/UCore.nvim",
+    main = "ucore",
+    lazy = false,
+    build = "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
+    dependencies = {
+      {
+        "windwp/nvim-autopairs",
+        event = "InsertEnter",
+        opts = {},
+      },
+
+      {
+        "saghen/blink.cmp",
+        opts = function(_, opts)
+          opts.sources = opts.sources or {}
+          opts.sources.default = opts.sources.default or { "lsp", "path", "snippets", "buffer" }
+
+          if not vim.tbl_contains(opts.sources.default, "ucore") then
+            table.insert(opts.sources.default, "ucore")
+          end
+
+          opts.sources.providers = opts.sources.providers or {}
+          opts.sources.providers.ucore = {
+            name = "UCore",
+            module = "ucore.completion.blink",
+            async = true,
+            timeout_ms = 2000,
+            min_keyword_length = 0,
+            score_offset = 50,
+          }
+
+          return opts
+        end,
+      },
+
+      {
+        "nvim-telescope/telescope.nvim",
+        dependencies = {
+          "nvim-lua/plenary.nvim",
+          "nvim-tree/nvim-web-devicons",
+        },
+      },
+    },
+    opts = {
+      auto_boot = true,
+      completion = {
+        enable = true,
+        keymap = "<C-l>",
+      },
+      ui = {
+        picker = "telescope",
+      },
+    },
+  },
+}
+```
+
+#### Standalone
+
 ```lua
 return {
   {
     "vlicecream/UVersionControlSystem.nvim",
+    main = "uvcs",
     lazy = false,
     opts = {
+      enable = true,
+      prompt_on_readonly_save = true,
+      provider = "auto",
       p4 = {
         command = "p4",
         -- port = "127.0.0.1:1666",
@@ -43,42 +157,28 @@ return {
 }
 ```
 
-With `UCore.nvim`:
+### Quick Start
 
-```lua
-return {
-  {
-    "vlicecream/UCore.nvim",
-    lazy = false,
-    build = "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
-    dependencies = {
-      { "vlicecream/UVersionControlSystem.nvim", lazy = false, opts = {} },
-      { "vlicecream/UTreeSitter.nvim", lazy = false, dependencies = { "nvim-treesitter/nvim-treesitter" }, opts = {} },
-    },
-    config = function()
-      require("ucore").setup({
-        auto_boot = true,
-        ui = { picker = "telescope" },
-      })
-    end,
-  },
-}
+Open any file inside an Unreal project and run:
+
+```vim
+:UVCS
 ```
+
+This opens the dashboard.
 
 ### Commands
 
 ```vim
-:UVCS                    " Open dashboard
-:UVCS dashboard          " Open dashboard
-:UVCS checkout           " p4 edit current file
-:UVCS add                " p4 add current file
-:UVCS revert             " p4 revert current file
-:UVCS commit             " Open visual commit UI
-:UVCS debug vcs          " Print diagnostics
-:checkhealth uvcs        " Environment diagnostics
+:UVCS
+:UVCS dashboard
+:UVCS checkout
+:UVCS add
+:UVCS revert
+:UVCS commit
+:UVCS debug vcs
+:checkhealth uvcs
 ```
-
-The user-facing command surface stays intentionally small. Changelists and shelves are handled inside the dashboard UI rather than through extra top-level commands.
 
 ### Configuration
 
@@ -99,17 +199,51 @@ require("uvcs").setup({
 })
 ```
 
+Legacy `vcs = { ... }` input is still normalized, but new configs should use the top-level `uvcs` options directly.
+
+### Workflow Notes
+
+- use `:UVCS` for the dashboard
+- use `:UVCS commit` for the submit window
+- use the dashboard UI for pending changelists and per-file actions
+- readonly buffers can prompt for `p4 edit` automatically on save
+
+### Related Repositories
+
+```text
+UTreeSitter                  grammar + queries + parser tests
+UTreeSitter.nvim             Neovim parser/filetype/highlight integration
+UVersionControlSystem.nvim   Unreal VCS dashboard and actions
+UCore.nvim                   Unreal project index, RPC, navigation, completion
+```
+
+### License
+
+MIT
+
+---
+
 ## 中文
 
-`UVersionControlSystem.nvim` 负责 Unreal 项目里的版本控制层：
+`UVersionControlSystem.nvim` 是 U 系列里的版本控制层。
+
+它主要负责：
 
 - Perforce 工作区检测
 - checkout / add / revert
-- 只读文件编辑提示
-- pending changelist / shelf
-- 可视化 dashboard 和 commit UI
+- 只读保存提示
+- 本地文件和 pending changelist dashboard
+- 可视化 commit 窗口
 
-它可以单独使用，也可以作为 `UCore.nvim` 的 VCS 配套插件。
+顶层命令面会保持精简。changelist、diff、submit 以及相关流程放在 dashboard 和 commit UI 里处理，不再额外扩成一堆公开命令。
+
+### 特性
+
+- 检测 Unreal 项目根目录和对应的 P4 工作区
+- 只读保存时提示并提供 `p4 edit`
+- `:UVCS checkout`、`:UVCS add`、`:UVCS revert`、`:UVCS commit`
+- dashboard 展示 opened 文件、本地候选文件和 pending changelist
+- commit 窗口支持文件勾选、提交信息编辑、diff、revert、submit
 
 ### 依赖
 
@@ -119,56 +253,149 @@ require("uvcs").setup({
 
 ### 安装
 
+#### 推荐组合
+
 ```lua
 return {
   {
+    "vlicecream/UTreeSitter.nvim",
+    main = "utreesitter",
+    lazy = false,
+    dependencies = {
+      {
+        "nvim-treesitter/nvim-treesitter",
+        build = ":TSUpdate",
+        opts = function(_, opts)
+          opts = opts or {}
+          opts.auto_install = true
+          opts.indent = { enable = true }
+          return opts
+        end,
+      },
+    },
+    opts = {},
+  },
+
+  {
     "vlicecream/UVersionControlSystem.nvim",
+    main = "uvcs",
     lazy = false,
     opts = {
+      enable = true,
+      prompt_on_readonly_save = true,
+      provider = "auto",
       p4 = {
         command = "p4",
+        -- port = "127.0.0.1:1666",
+        -- user = "YourUser",
+        -- client = "YourWorkspace",
+      },
+    },
+  },
+
+  {
+    "vlicecream/UCore.nvim",
+    main = "ucore",
+    lazy = false,
+    build = "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
+    dependencies = {
+      {
+        "windwp/nvim-autopairs",
+        event = "InsertEnter",
+        opts = {},
+      },
+
+      {
+        "saghen/blink.cmp",
+        opts = function(_, opts)
+          opts.sources = opts.sources or {}
+          opts.sources.default = opts.sources.default or { "lsp", "path", "snippets", "buffer" }
+
+          if not vim.tbl_contains(opts.sources.default, "ucore") then
+            table.insert(opts.sources.default, "ucore")
+          end
+
+          opts.sources.providers = opts.sources.providers or {}
+          opts.sources.providers.ucore = {
+            name = "UCore",
+            module = "ucore.completion.blink",
+            async = true,
+            timeout_ms = 2000,
+            min_keyword_length = 0,
+            score_offset = 50,
+          }
+
+          return opts
+        end,
+      },
+
+      {
+        "nvim-telescope/telescope.nvim",
+        dependencies = {
+          "nvim-lua/plenary.nvim",
+          "nvim-tree/nvim-web-devicons",
+        },
+      },
+    },
+    opts = {
+      auto_boot = true,
+      completion = {
+        enable = true,
+        keymap = "<C-l>",
+      },
+      ui = {
+        picker = "telescope",
       },
     },
   },
 }
 ```
 
-配合 `UCore.nvim`：
+#### 单独使用
 
 ```lua
 return {
   {
-    "vlicecream/UCore.nvim",
+    "vlicecream/UVersionControlSystem.nvim",
+    main = "uvcs",
     lazy = false,
-    build = "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1",
-    dependencies = {
-      { "vlicecream/UVersionControlSystem.nvim", lazy = false, opts = {} },
-      { "vlicecream/UTreeSitter.nvim", lazy = false, dependencies = { "nvim-treesitter/nvim-treesitter" }, opts = {} },
+    opts = {
+      enable = true,
+      prompt_on_readonly_save = true,
+      provider = "auto",
+      p4 = {
+        command = "p4",
+        -- port = "127.0.0.1:1666",
+        -- user = "YourUser",
+        -- client = "YourWorkspace",
+      },
     },
-    config = function()
-      require("ucore").setup({
-        auto_boot = true,
-        ui = { picker = "telescope" },
-      })
-    end,
   },
 }
 ```
 
+### 快速开始
+
+在 Unreal 项目里打开任意文件后运行：
+
+```vim
+:UVCS
+```
+
+这会打开 dashboard。
+
 ### 命令
 
 ```vim
-:UVCS                    " 打开 dashboard
-:UVCS dashboard          " 打开 dashboard
-:UVCS checkout           " 对当前文件执行 p4 edit
-:UVCS add                " 对当前文件执行 p4 add
-:UVCS revert             " 对当前文件执行 p4 revert
-:UVCS commit             " 打开可视化提交界面
-:UVCS debug vcs          " 输出诊断信息
-:checkhealth uvcs        " 环境诊断
+:UVCS
+:UVCS dashboard
+:UVCS checkout
+:UVCS add
+:UVCS revert
+:UVCS commit
+:UVCS debug vcs
+:checkhealth uvcs
 ```
-
-对外命令面保持精简。changelist 和 shelf 仍然会在 dashboard 里展示和处理，但不再额外暴露成顶层命令。
 
 ### 配置
 
@@ -188,3 +415,25 @@ require("uvcs").setup({
   },
 })
 ```
+
+旧的 `vcs = { ... }` 输入仍然会被兼容处理，但新配置建议直接写顶层 `uvcs` 选项。
+
+### 工作流说明
+
+- 用 `:UVCS` 打开 dashboard
+- 用 `:UVCS commit` 打开提交流程窗口
+- pending changelist 和逐文件操作放在 dashboard UI 里处理
+- 只读 buffer 保存时可以自动提示 `p4 edit`
+
+### 相关仓库
+
+```text
+UTreeSitter                  grammar + queries + parser tests
+UTreeSitter.nvim             Neovim parser/filetype/highlight integration
+UVersionControlSystem.nvim   Unreal VCS dashboard and actions
+UCore.nvim                   Unreal project index, RPC, navigation, completion
+```
+
+### 许可
+
+MIT
