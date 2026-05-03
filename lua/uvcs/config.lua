@@ -47,7 +47,7 @@ M.values = vim.deepcopy(defaults)
 sync_legacy_alias()
 
 function M.setup(opts)
-	M.values = vim.tbl_deep_extend("force", M.values, normalize_opts(opts))
+	M.values = vim.tbl_deep_extend("force", vim.deepcopy(defaults), normalize_opts(opts))
 	sync_legacy_alias()
 	return M.values
 end

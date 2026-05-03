@@ -179,6 +179,7 @@ end
 
 function M.setup(opts)
 	config.setup(opts)
+	M.reset()
 	M.clear_cache()
 	require("uvcs.commands").register()
 
@@ -190,6 +191,15 @@ function M.setup(opts)
 	if current.prompt_on_readonly_save ~= false then
 		require("uvcs.readonly").setup()
 	end
+end
+
+function M.reset()
+	M.clear_cache()
+	pcall(vim.api.nvim_del_user_command, "UVCS")
+	pcall(vim.api.nvim_del_augroup_by_name, "UVCSVcsDashboard")
+	pcall(function()
+		require("uvcs.readonly").reset()
+	end)
 end
 
 return M

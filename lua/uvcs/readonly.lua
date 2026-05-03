@@ -4,6 +4,7 @@ local vcs = require("uvcs")
 local M = {}
 
 local group_name = "UVCSReadonlySave"
+local preflight_keys = { "i", "I", "a", "A", "o", "O", "s", "S", "c", "C" }
 
 local function refresh_dashboard()
   vim.schedule(function()
@@ -104,7 +105,7 @@ function M.setup()
 
   if not vim.g.uvcs_readonly_preflight_keymaps then
     vim.g.uvcs_readonly_preflight_keymaps = true
-    for _, key in ipairs({ "i", "I", "a", "A", "o", "O", "s", "S", "c", "C" }) do
+    for _, key in ipairs(preflight_keys) do
       vim.keymap.set("n", key, function()
         local buf = vim.api.nvim_get_current_buf()
         local path = vim.api.nvim_buf_get_name(buf)
@@ -200,6 +201,17 @@ function M.setup()
       end
     end,
   })
+end
+
+function M.reset()
+  pcall(vim.api.nvim_del_augroup_by_name, group_name)
+  vim.g.uvcs_readonly_preflight_keymaps = nil
+  for _, key in ipairs(preflight_keys) do
+    local info = vim.fn.maparg(key, "n", false, true)
+    if type(info) == "table" and tostring(info.desc or "") == "UVCS readonly edit preflight" then
+      pcall(vim.keymap.del, "n", key)
+    end
+  end
 end
 
 return M
