@@ -26,6 +26,43 @@ local function executable(name)
   return vim.fn.executable(name) == 1
 end
 
+local function first_error_line(stdout, stderr, fallback)
+  local text = stderr ~= "" and stderr or stdout
+  return tostring(text or ""):match("[^\r\n]+") or fallback
+end
+
+local function is_login_error(text)
+  text = tostring(text or ""):lower()
+  if text == "" then
+    return false
+  end
+
+  return text:find("not logged in", 1, true) ~= nil
+      or text:find("session has expired", 1, true) ~= nil
+      or text:find("password invalid", 1, true) ~= nil
+      or text:find("p4passwd invalid or unset", 1, true) ~= nil
+      or text:find("ticket has expired", 1, true) ~= nil
+      or text:find("your session has expired", 1, true) ~= nil
+end
+
+local function run_with_login_retry(op)
+  local ok, err = op()
+  if ok then
+    return true, err
+  end
+
+  if not (M.needs_login() or is_login_error(err)) then
+    return false, err
+  end
+
+  local login_ok, login_err = M.login()
+  if not login_ok then
+    return false, login_err or err
+  end
+
+  return op()
+end
+
 function M.name()
   return "p4"
 end
@@ -670,12 +707,13 @@ function M.checkout(path, root)
   if vim.fn.filereadable(path) ~= 1 then
     return false, "file not found: " .. path
   end
-  local stdout, stderr, code = M.system_err(M.p4_cmd("edit", {win_path(path)}))
-  if code ~= 0 then
-    local msg = (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 edit failed"
-    return false, msg
-  end
-  return true, nil
+  return run_with_login_retry(function()
+    local stdout, stderr, code = M.system_err(M.p4_cmd("edit", {win_path(path)}))
+    if code ~= 0 then
+      return false, first_error_line(stdout, stderr, "p4 edit failed")
+    end
+    return true, nil
+  end)
 end
 
 function M.diff(path, root)
@@ -721,20 +759,28 @@ function M.make_writable(path)
 end
 
 function M.create_changelist(description)
-  local spec = M.system(M.p4_cmd("changelist", {"-o"}))
-  if vim.v.shell_error ~= 0 then
-    return nil, "failed to read changelist spec"
+  local change_num
+  local ok, err = run_with_login_retry(function()
+    local spec = M.system(M.p4_cmd("changelist", {"-o"}))
+    if vim.v.shell_error ~= 0 then
+      return false, first_error_line(spec, "", "failed to read changelist spec")
+    end
+    local new_spec = spec:gsub("<enter description here>", description or "(no description)")
+    local stdout, stderr, code = M.system_err(M.p4_cmd("changelist", {"-i"}), new_spec)
+    if code ~= 0 then
+      return false, first_error_line(stdout, stderr, "failed to create changelist")
+    end
+    change_num = stdout:match("Change (%d+)")
+    if not change_num then
+      return false, "could not parse changelist number"
+    end
+    return true, nil
+  end)
+
+  if not ok then
+    return nil, err
   end
-  local new_spec = spec:gsub("<enter description here>", description or "(no description)")
-  local stdout, stderr, code = M.system_err(M.p4_cmd("changelist", {"-i"}), new_spec)
-  if code ~= 0 then
-    local msg = (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "failed to create changelist"
-    return nil, msg
-  end
-  local change_num = stdout:match("Change (%d+)")
-  if not change_num then
-    return nil, "could not parse changelist number"
-  end
+
   return tonumber(change_num), nil
 end
 
@@ -744,19 +790,23 @@ function M.reopen_file(path, change_num)
   if suspicious then
     return true, nil
   end
-  local stdout, stderr, code = M.system_err(M.p4_cmd("reopen", {"-c", tostring(change_num), win_path(path)}))
-  if code ~= 0 then
-    return false, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "reopen failed"
-  end
-  return true, nil
+  return run_with_login_retry(function()
+    local stdout, stderr, code = M.system_err(M.p4_cmd("reopen", {"-c", tostring(change_num), win_path(path)}))
+    if code ~= 0 then
+      return false, first_error_line(stdout, stderr, "reopen failed")
+    end
+    return true, nil
+  end)
 end
 
 function M.submit_changelist(change_num)
-  local stdout, stderr, code = M.system_err(M.p4_cmd("submit", {"-c", tostring(change_num)}))
-  if code ~= 0 then
-    return false, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "submit failed"
-  end
-  return true, stdout
+  return run_with_login_retry(function()
+    local stdout, stderr, code = M.system_err(M.p4_cmd("submit", {"-c", tostring(change_num)}))
+    if code ~= 0 then
+      return false, first_error_line(stdout, stderr, "submit failed")
+    end
+    return true, stdout
+  end)
 end
 
 function M.commit(root, files, message, opts)
@@ -798,11 +848,13 @@ function M.do_revert(path, root)
   if vim.fn.filereadable(path) ~= 1 then
     return false, "file not found: " .. path
   end
-  local stdout, stderr, code = M.system_err(M.p4_cmd("revert", {win_path(path)}))
-  if code ~= 0 then
-    return false, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 revert failed"
-  end
-  return true, nil
+  return run_with_login_retry(function()
+    local stdout, stderr, code = M.system_err(M.p4_cmd("revert", {win_path(path)}))
+    if code ~= 0 then
+      return false, first_error_line(stdout, stderr, "p4 revert failed")
+    end
+    return true, nil
+  end)
 end
 
 function M.add_file(path, root)
@@ -814,12 +866,13 @@ function M.add_file(path, root)
   if not is_real_local_path(path, root) then
     return false, "invalid local file path: " .. path
   end
-  local stdout, stderr, code = M.system_err(M.p4_cmd("add", {win_path(path)}))
-  if code ~= 0 then
-    local msg = (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 add failed"
-    return false, msg
-  end
-  return true, nil
+  return run_with_login_retry(function()
+    local stdout, stderr, code = M.system_err(M.p4_cmd("add", {win_path(path)}))
+    if code ~= 0 then
+      return false, first_error_line(stdout, stderr, "p4 add failed")
+    end
+    return true, nil
+  end)
 end
 
 function M.changelist_detail(change_num)
