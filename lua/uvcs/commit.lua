@@ -716,7 +716,15 @@ function M.setup_keymaps(buf)
     M.submit(buf)
   end, opts)
 
+  vim.keymap.set("i", "<Esc>", function()
+    M.close(buf)
+  end, opts)
+
   vim.keymap.set("n", "q", function()
+    M.close(buf)
+  end, opts)
+
+  vim.keymap.set("n", "<Esc>", function()
     M.close(buf)
   end, opts)
 end

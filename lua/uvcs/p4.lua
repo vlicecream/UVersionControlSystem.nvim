@@ -26,6 +26,83 @@ local function executable(name)
   return vim.fn.executable(name) == 1
 end
 
+local function prompt_secret_input(title, default)
+  title = tostring(title or "Input")
+  default = tostring(default or "")
+
+  local width = math.max(32, math.min(vim.o.columns - 8, math.max(48, vim.fn.strdisplaywidth(default) + 8)))
+  local row = math.max(1, math.floor(vim.o.lines * 0.3))
+  local col = math.max(0, math.floor((vim.o.columns - width) / 2))
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  local winid = vim.api.nvim_open_win(bufnr, true, {
+    relative = "editor",
+    row = row,
+    col = col,
+    width = width,
+    height = 1,
+    style = "minimal",
+    border = "rounded",
+    title = title,
+    title_pos = "center",
+  })
+
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile = false
+  vim.bo[bufnr].modifiable = true
+  vim.bo[bufnr].filetype = "uvcs_secret_input"
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { default })
+  vim.api.nvim_set_option_value("conceallevel", 2, { win = winid })
+  vim.api.nvim_set_option_value("concealcursor", "nivc", { win = winid })
+  vim.api.nvim_buf_call(bufnr, function()
+    vim.cmd("syntax clear")
+    vim.cmd("syntax match UVCSSecret /./ conceal cchar=*")
+  end)
+
+  local done = false
+  local result = nil
+
+  local function finish(value)
+    if done then
+      return
+    end
+    done = true
+    result = value
+    if winid and vim.api.nvim_win_is_valid(winid) then
+      vim.api.nvim_win_close(winid, true)
+    end
+  end
+
+  local function submit()
+    local line = vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] or ""
+    finish(line)
+  end
+
+  local function cancel()
+    finish(nil)
+  end
+
+  local keymap_opts = { buffer = bufnr, nowait = true, silent = true }
+  vim.keymap.set("n", "<CR>", submit, keymap_opts)
+  vim.keymap.set("i", "<CR>", submit, keymap_opts)
+  vim.keymap.set("n", "<Esc>", cancel, keymap_opts)
+  vim.keymap.set("i", "<Esc>", cancel, keymap_opts)
+  vim.keymap.set("n", "q", cancel, keymap_opts)
+
+  vim.api.nvim_win_set_cursor(winid, { 1, #default })
+  vim.schedule(function()
+    if winid and vim.api.nvim_win_is_valid(winid) then
+      vim.cmd("startinsert!")
+    end
+  end)
+
+  vim.wait(2147483647, function()
+    return done
+  end, 20, false)
+
+  return result
+end
+
 local function first_error_line(stdout, stderr, fallback)
   local text = stderr ~= "" and stderr or stdout
   return tostring(text or ""):match("[^\r\n]+") or fallback
@@ -889,13 +966,11 @@ function M.needs_login()
 end
 
 function M.login(password)
-  local ok = pcall(vim.fn.inputsave)
   local pwd = password
   if not pwd then
-    pwd = vim.fn.inputsecret("P4 password: ")
+    pwd = prompt_secret_input("P4 password")
   end
-  if ok then pcall(vim.fn.inputrestore) end
-  if pwd == "" then
+  if not pwd or pwd == "" then
     return false, "password is empty"
   end
   local result = vim.fn.system(M.p4_cmd("login"), pwd)
