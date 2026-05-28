@@ -30,76 +30,39 @@ local function prompt_secret_input(title, default)
   title = tostring(title or "Input")
   default = tostring(default or "")
 
-  local width = math.max(32, math.min(vim.o.columns - 8, math.max(48, vim.fn.strdisplaywidth(default) + 8)))
-  local row = math.max(1, math.floor(vim.o.lines * 0.3))
-  local col = math.max(0, math.floor((vim.o.columns - width) / 2))
-  local bufnr = vim.api.nvim_create_buf(false, true)
-  local winid = vim.api.nvim_open_win(bufnr, true, {
-    relative = "editor",
-    row = row,
-    col = col,
-    width = width,
-    height = 1,
-    style = "minimal",
-    border = "rounded",
-    title = title,
-    title_pos = "center",
-  })
+  local ok_ui, ui = pcall(require, "ucore.ui.select")
+  if ok_ui and type(ui) == "table" and type(ui.input) == "function" then
+    local done = false
+    local result = nil
+    local ok_input = pcall(ui.input, {
+      title = title,
+      default = default,
+      secret = true,
+    }, function(value)
+      result = value
+      done = true
+    end)
 
-  vim.bo[bufnr].buftype = "nofile"
-  vim.bo[bufnr].bufhidden = "wipe"
-  vim.bo[bufnr].swapfile = false
-  vim.bo[bufnr].modifiable = true
-  vim.bo[bufnr].filetype = "uvcs_secret_input"
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { default })
-  vim.api.nvim_set_option_value("conceallevel", 2, { win = winid })
-  vim.api.nvim_set_option_value("concealcursor", "nivc", { win = winid })
-  vim.api.nvim_buf_call(bufnr, function()
-    vim.cmd("syntax clear")
-    vim.cmd("syntax match UVCSSecret /./ conceal cchar=*")
-  end)
-
-  local done = false
-  local result = nil
-
-  local function finish(value)
-    if done then
-      return
-    end
-    done = true
-    result = value
-    if winid and vim.api.nvim_win_is_valid(winid) then
-      vim.api.nvim_win_close(winid, true)
+    if ok_input then
+      vim.wait(2147483647, function()
+        return done
+      end, 20, false)
+      return result
     end
   end
 
-  local function submit()
-    local line = vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] or ""
-    finish(line)
+  vim.fn.inputsave()
+  local ok, result
+  if default ~= "" then
+    ok, result = pcall(vim.fn.inputsecret, title .. ": ", default)
+  else
+    ok, result = pcall(vim.fn.inputsecret, title .. ": ")
   end
+  vim.fn.inputrestore()
 
-  local function cancel()
-    finish(nil)
+  if not ok then
+    return nil
   end
-
-  local keymap_opts = { buffer = bufnr, nowait = true, silent = true }
-  vim.keymap.set("n", "<CR>", submit, keymap_opts)
-  vim.keymap.set("i", "<CR>", submit, keymap_opts)
-  vim.keymap.set("n", "<Esc>", cancel, keymap_opts)
-  vim.keymap.set("i", "<Esc>", cancel, keymap_opts)
-  vim.keymap.set("n", "q", cancel, keymap_opts)
-
-  vim.api.nvim_win_set_cursor(winid, { 1, #default })
-  vim.schedule(function()
-    if winid and vim.api.nvim_win_is_valid(winid) then
-      vim.cmd("startinsert!")
-    end
-  end)
-
-  vim.wait(2147483647, function()
-    return done
-  end, 20, false)
-
   return result
 end
 
@@ -123,12 +86,19 @@ local function is_login_error(text)
 end
 
 local function run_with_login_retry(op)
+  if M.needs_login() then
+    local login_ok, login_err = M.login()
+    if not login_ok then
+      return false, login_err
+    end
+  end
+
   local ok, err = op()
   if ok then
     return true, err
   end
 
-  if not (M.needs_login() or is_login_error(err)) then
+  if not is_login_error(err) then
     return false, err
   end
 
@@ -973,9 +943,9 @@ function M.login(password)
   if not pwd or pwd == "" then
     return false, "password is empty"
   end
-  local result = vim.fn.system(M.p4_cmd("login"), pwd)
-  if vim.v.shell_error ~= 0 then
-    local err = result:match("[^\r\n]+") or "login failed"
+  local stdout, stderr, code = M.system_err(M.p4_cmd("login"), pwd .. "\n")
+  if code ~= 0 then
+    local err = first_error_line(stdout, stderr, "login failed")
     return false, err
   end
   return true, nil

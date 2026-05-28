@@ -16,7 +16,7 @@ local function scratch(title, lines)
 end
 
 function M.login()
-	local ok, result = pcall(function()
+	local ok, result, err = pcall(function()
 		return require("uvcs.p4").login()
 	end)
 
@@ -25,8 +25,8 @@ function M.login()
 		return
 	end
 
-	local err = ok and "login failed" or result
-	vim.notify("UVCS: P4 login failed: " .. tostring(err), vim.log.levels.ERROR)
+	local message = ok and (err or "login failed") or result
+	vim.notify("UVCS: P4 login failed: " .. tostring(message), vim.log.levels.ERROR)
 end
 
 function M.dashboard()
