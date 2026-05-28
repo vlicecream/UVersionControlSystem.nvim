@@ -31,22 +31,13 @@ local function prompt_secret_input(title, default)
   default = tostring(default or "")
 
   local ok_ui, ui = pcall(require, "ucore.ui.select")
-  if ok_ui and type(ui) == "table" and type(ui.input) == "function" then
-    local done = false
-    local result = nil
-    local ok_input = pcall(ui.input, {
+  if ok_ui and type(ui) == "table" and type(ui.input_sync) == "function" then
+    local ok_input, result = pcall(ui.input_sync, {
       title = title,
       default = default,
       secret = true,
-    }, function(value)
-      result = value
-      done = true
-    end)
-
+    })
     if ok_input then
-      vim.wait(2147483647, function()
-        return done
-      end, 20, false)
       return result
     end
   end
