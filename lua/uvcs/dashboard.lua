@@ -1,5 +1,6 @@
 local project = require("uvcs.project")
 local p4 = require("uvcs.p4")
+local cache = require("uvcs.cache")
 
 local M = {}
 
@@ -109,14 +110,31 @@ local function count_values(values)
   return type(values) == "table" and #values or 0
 end
 
+local function cached_counts()
+  if not state or type(state.cached_summary) ~= "table" then
+    return {}
+  end
+  return state.cached_summary.counts or {}
+end
+
+local function cached_count(key)
+  local counts = cached_counts()
+  return tonumber(counts[key] or 0) or 0
+end
+
+local function deferred_local_scan()
+  return state and state.defer_local_scan == true
+end
+
+local function deferred_writable_scan()
+  return state and state.defer_writable_scan == true
+end
+
 local group_opened_by_changelist
 
 local function section_count(section)
   if not state then
     return "0"
-  end
-  if state.loading[section] then
-    return "..."
   end
   if state.data.errors[section] then
     return "err"
@@ -125,7 +143,14 @@ local function section_count(section)
     return "1"
   end
   if section == "shelved" then
-    return tostring(count_values(state.data.shelved)) .. " shelves"
+    local count = count_values(state.data.shelved)
+    if count == 0 then
+      count = cached_count("shelved")
+      if count == 0 and state.loading.shelved then
+        return "..."
+      end
+    end
+    return tostring(count) .. " shelves"
   end
   if section == "files" then
     local groups = group_opened_by_changelist(state.data.opened)
@@ -133,10 +158,30 @@ local function section_count(section)
     for _, files in pairs(groups) do
       count = count + #files
     end
-    return tostring(count + count_values(state.data.local_changes))
+    local local_count = count_values(state.data.local_changes)
+    if count == 0 and count_values(state.data.opened) == 0 then
+      count = cached_count("opened")
+    end
+    if local_count == 0 then
+      local_count = cached_count("local_changes")
+    end
+    if count == 0 and local_count == 0 and state.loading.files then
+      return "..."
+    end
+    return tostring(count + local_count)
   end
   if section == "writable" then
-    return tostring(count_values(state.data.writable_unopened))
+    local count = count_values(state.data.writable_unopened)
+    if count == 0 then
+      count = cached_count("writable")
+      if count == 0 and state.loading.writable then
+        return "..."
+      end
+    end
+    return tostring(count)
+  end
+  if state.loading[section] then
+    return "..."
   end
   return "0"
 end
@@ -227,6 +272,26 @@ local function loading_message(section)
   return "  (loading...)"
 end
 
+local function local_scan_message()
+  if deferred_local_scan() then
+    return "  (press R to scan local files)"
+  end
+  if state and state.loading.files then
+    return "  (scanning local reconcile candidates...)"
+  end
+  return nil
+end
+
+local function writable_scan_message()
+  if deferred_writable_scan() then
+    return "  (press R to scan writable files)"
+  end
+  if state and state.loading.writable then
+    return "  (scanning writable files...)"
+  end
+  return nil
+end
+
 local function error_message(section)
   if not state then
     return nil
@@ -248,21 +313,22 @@ local function rebuild_rows()
   table.insert(rows, { kind = "section", label = "Workspace" })
   table.insert(rows, { kind = "info", label = "Root", value = state.root })
 
-  if state.loading.info then
+  if state.loading.info and next(data.info or {}) == nil then
     table.insert(rows, { kind = "empty", text = loading_message("info") })
   elseif data.errors.info then
     table.insert(rows, { kind = "empty", text = error_message("info") })
   else
     table.insert(rows, { kind = "info", label = "Workspace", value = data.info["client name"] or "?" })
     table.insert(rows, { kind = "info", label = "User", value = data.info["user name"] or "?" })
+    if state.loading.info then
+      table.insert(rows, { kind = "empty", text = "  (refreshing workspace info...)" })
+    end
   end
 
   if should_show("files") then
     table.insert(rows, { kind = "blank" })
     table.insert(rows, { kind = "section", label = "Workspace Changes" })
-    if state.loading.files then
-      table.insert(rows, { kind = "empty", text = loading_message("files") })
-    elseif data.errors.files then
+    if data.errors.files then
       table.insert(rows, { kind = "empty", text = error_message("files") })
     else
       local groups = group_opened_by_changelist(data.opened)
@@ -362,7 +428,12 @@ local function rebuild_rows()
       end
 
       if not has_changes then
-        table.insert(rows, { kind = "empty", text = "  (no changes)" })
+        table.insert(rows, { kind = "empty", text = local_scan_message() or loading_message("files") or "  (no changes)" })
+      else
+        local scan_msg = local_scan_message()
+        if scan_msg then
+          table.insert(rows, { kind = "empty", text = scan_msg })
+        end
       end
     end
   end
@@ -370,9 +441,7 @@ local function rebuild_rows()
   if should_show("writable") then
     table.insert(rows, { kind = "blank" })
     table.insert(rows, { kind = "section", label = "Writable Files" })
-    if state.loading.writable then
-      table.insert(rows, { kind = "empty", text = loading_message("writable") })
-    elseif data.errors.writable then
+    if data.errors.writable then
       table.insert(rows, { kind = "empty", text = error_message("writable") })
     elseif count_values(data.writable_unopened) > 0 then
       for _, f in ipairs(data.writable_unopened or {}) do
@@ -391,8 +460,12 @@ local function rebuild_rows()
           })
         end
       end
+      local scan_msg = writable_scan_message()
+      if scan_msg then
+        table.insert(rows, { kind = "empty", text = scan_msg })
+      end
     else
-      table.insert(rows, { kind = "empty", text = "  (none)" })
+      table.insert(rows, { kind = "empty", text = writable_scan_message() or "  (none)" })
     end
   end
 
@@ -873,8 +946,14 @@ function M.render_left()
       local suffix = ""
       if label == "Workspace Changes" then
         suffix = section_count("files") .. " files"
+        if deferred_local_scan() then
+          suffix = suffix .. " | R scan"
+        end
       elseif label == "Writable Files" then
         suffix = section_count("writable") .. " files"
+        if deferred_writable_scan() then
+          suffix = suffix .. " | R scan"
+        end
       elseif label == "Pending Changelists" then
         suffix = section_count("pending") .. " changelists"
       elseif label == "Shelves" then
@@ -1272,6 +1351,20 @@ local function render_all(keep_cursor)
   M.render_footer()
 end
 
+local function schedule_render()
+  if not state or state.render_scheduled then
+    return
+  end
+  state.render_scheduled = true
+  vim.defer_fn(function()
+    if not state then
+      return
+    end
+    state.render_scheduled = false
+    render_all(true)
+  end, 50)
+end
+
 local function load_changelist_detail(item)
   if not state or not item or not item.number then return end
   local cache_key = item.kind .. ":" .. tostring(item.number)
@@ -1292,10 +1385,14 @@ end
 
 local function set_loading_for_filter()
   local filter = state.filter or "all"
+  local load_file_section = filter ~= "shelved"
+  local should_scan_local = state.force_local_scan or filter == "files"
   state.loading.info = true
-  state.loading.files = filter == "all" or filter == "files"
+  state.loading.files = load_file_section
   state.loading.shelved = filter == "all" or filter == "shelved"
-  state.loading.writable = filter == "all" or filter == "files"
+  state.loading.writable = load_file_section and should_scan_local
+  state.defer_local_scan = load_file_section and not should_scan_local
+  state.defer_writable_scan = load_file_section and not should_scan_local
 end
 
 local function mark_done(section, err)
@@ -1317,12 +1414,50 @@ local function update_ready_status()
   end
 end
 
+local function maybe_save_cache()
+  if not state or state.loading.info or state.loading.files or state.loading.shelved or state.loading.writable then
+    return
+  end
+  if next(state.data.info or {}) == nil then
+    return
+  end
+
+  local payload = {
+    info = state.data.info,
+    opened_count = state.last_load_included_files and count_values(state.data.opened) or cached_count("opened"),
+    local_changes_count = state.last_load_scanned_local and count_values(state.data.local_changes) or cached_count("local_changes"),
+    writable_count = state.last_load_scanned_local and count_values(state.data.writable_unopened) or cached_count("writable"),
+    shelved_count = state.last_load_included_shelved and count_values(state.data.shelved) or cached_count("shelved"),
+    pending_count = count_values(state.data.pending),
+  }
+
+  cache.save(state.root, payload)
+  state.cached_summary = {
+    info = vim.deepcopy(payload.info or {}),
+    counts = {
+      opened = payload.opened_count,
+      local_changes = payload.local_changes_count,
+      writable = payload.writable_count,
+      shelved = payload.shelved_count,
+      pending = payload.pending_count,
+    },
+  }
+end
+
 function M.load_data()
   if not state then return end
   local root = state.root
   local token = state.token
+  local filter = state.filter or "all"
+  local should_scan_local = state.force_local_scan or filter == "files"
+  state.last_load_included_files = filter ~= "shelved"
+  state.last_load_scanned_local = state.last_load_included_files and should_scan_local
+  state.last_load_included_shelved = filter == "all" or filter == "shelved"
+  state.force_local_scan = false
   set_loading_for_filter()
-  state.data.info = {}
+  state.status = state.cached_summary and "refreshing from cache..." or "loading..."
+  state.first_paint = false
+  state.data.info = vim.deepcopy((state.cached_summary and state.cached_summary.info) or {})
   state.data.opened = {}
   state.data.local_changes = {}
   state.data.writable_unopened = {}
@@ -1338,14 +1473,50 @@ function M.load_data()
 
   p4.info_async(function(info, err)
     if not state or state.token ~= token then return end
-    state.data.info = info or {}
+    if info and next(info) ~= nil then
+      state.data.info = info
+    end
     mark_done("info", err and ("p4 info failed: " .. tostring(err)) or nil)
     update_ready_status()
-    render_all(true)
+    maybe_save_cache()
+    schedule_render()
+
+    p4.pending_changelists_with_info_async(root, info, function(changes, pending_err)
+      if not state or state.token ~= token then return end
+      state.data.pending = changes or {}
+      if pending_err and not state.data.errors.pending then
+        state.data.errors.pending = pending_err
+      end
+      maybe_save_cache()
+      schedule_render()
+    end)
+
+    if state.loading.shelved then
+      p4.shelved_changelists_with_info_async(root, info, function(changes, shelved_err)
+        if not state or state.token ~= token then return end
+        state.data.shelved = changes or {}
+        for _, ch in ipairs(state.data.shelved or {}) do
+          local key = tostring(ch.number)
+          if not state.data.shelf_files[key] then
+            p4.shelved_detail_async(ch.number, function(detail)
+              if not state or state.token ~= token then return end
+              if detail and detail.files then
+                state.data.shelf_files[key] = { files = {}, loading = false, lazy_count = #detail.files }
+              end
+              schedule_render()
+            end)
+          end
+        end
+        mark_done("shelved", shelved_err and ("p4 shelved failed: " .. tostring(shelved_err)) or nil)
+        update_ready_status()
+        maybe_save_cache()
+        schedule_render()
+      end)
+    end
   end)
 
   if state.loading.files then
-    local pending_files = 2
+    local pending_files = should_scan_local and 2 or 1
     local file_errors = {}
     local function done_files(kind, err)
       if err then table.insert(file_errors, kind .. ": " .. tostring(err)) end
@@ -1353,7 +1524,8 @@ function M.load_data()
       if pending_files == 0 then
         mark_done("files", #file_errors > 0 and table.concat(file_errors, "; ") or nil)
         update_ready_status()
-        render_all(true)
+        maybe_save_cache()
+        schedule_render()
       end
     end
 
@@ -1362,61 +1534,39 @@ function M.load_data()
       state.data.opened = vim.tbl_filter(function(file)
         return file and is_dashboard_file(file.path)
       end, files or {})
+      if not state.first_paint then
+        state.first_paint = true
+        render_all(false)
+      else
+        schedule_render()
+      end
       done_files("opened", err)
     end)
-    p4.status_async(root, function(files, err)
-      if not state or state.token ~= token then return end
-      state.data.local_changes = vim.tbl_filter(function(file)
-        return file and is_dashboard_file(file.path)
-      end, files or {})
-      done_files("status", err)
-    end)
-  end
 
-  if state.loading.writable then
-    p4.writable_unopened_async(root, function(files, err)
-      if not state or state.token ~= token then return end
-      state.data.writable_unopened = vim.tbl_filter(function(file)
-        return file and is_dashboard_file(file.path)
-      end, files or {})
-      mark_done("writable", err and ("p4 writable failed: " .. tostring(err)) or nil)
-      update_ready_status()
-      render_all(true)
-    end)
-  end
+    if should_scan_local then
+      p4.status_async(root, function(files, err)
+        if not state or state.token ~= token then return end
+        state.data.local_changes = vim.tbl_filter(function(file)
+          return file and is_dashboard_file(file.path)
+        end, files or {})
+        done_files("status", err)
+      end)
 
-  -- fetch pending changelists for header descriptions (not displayed as section)
-  p4.pending_changelists_async(root, function(changes, err)
-    if not state or state.token ~= token then return end
-    state.data.pending = changes or {}
-    update_ready_status()
-    render_all(true)
-  end)
-
-  if state.loading.shelved then
-    p4.shelved_changelists_async(root, function(changes, err)
-      if not state or state.token ~= token then return end
-      state.data.shelved = changes or {}
-      for _, ch in ipairs(state.data.shelved or {}) do
-        local key = tostring(ch.number)
-        if not state.data.shelf_files[key] then
-          p4.shelved_detail_async(ch.number, function(detail, err)
-            if not state or state.token ~= token then return end
-            if detail and detail.files then
-              state.data.shelf_files[key] = { files = {}, loading = false, lazy_count = #detail.files }
-            end
-            render_all(true)
-          end)
-        end
-      end
-      mark_done("shelved", err and ("p4 shelved failed: " .. tostring(err)) or nil)
-      update_ready_status()
-      render_all(true)
-    end)
+      p4.writable_unopened_async(root, function(files, err)
+        if not state or state.token ~= token then return end
+        state.data.writable_unopened = vim.tbl_filter(function(file)
+          return file and is_dashboard_file(file.path)
+        end, files or {})
+        mark_done("writable", err and ("p4 writable failed: " .. tostring(err)) or nil)
+        update_ready_status()
+        maybe_save_cache()
+        schedule_render()
+      end)
+    end
   end
 
   update_ready_status()
-  render_all(true)
+  schedule_render()
 end
 
 local function setup_keymaps()
@@ -1664,7 +1814,7 @@ local function setup_keymaps()
   end, opts)
 
   vim.keymap.set("n", "R", function()
-    M.refresh()
+    M.refresh({ force_local_scan = true })
   end, opts)
 
   vim.keymap.set("n", "?", function()
@@ -1711,10 +1861,12 @@ q/Esc    Close dashboard
   end
 end
 
-function M.refresh()
+function M.refresh(opts)
   if not state then return end
+  opts = opts or {}
   state.token = state.token + 1
-  state.status = "refreshing..."
+  state.status = opts.force_local_scan and "refreshing with local scan..." or "refreshing..."
+  state.force_local_scan = opts.force_local_scan == true
   state.cache.diff = {}
   state.cache.changelist_detail = {}
   M.load_data()
@@ -1761,6 +1913,15 @@ function M.open(opts)
     status = "loading...",
     token = 1,
     loading = {},
+    force_local_scan = false,
+    first_paint = false,
+    render_scheduled = false,
+    defer_local_scan = false,
+    defer_writable_scan = false,
+    last_load_included_files = false,
+    last_load_scanned_local = false,
+    last_load_included_shelved = false,
+    cached_summary = cache.load(root),
     data = {
       info = {},
       opened = {},

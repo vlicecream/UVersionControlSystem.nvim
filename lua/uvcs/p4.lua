@@ -30,18 +30,6 @@ local function prompt_secret_input(title, default)
   title = tostring(title or "Input")
   default = tostring(default or "")
 
-  local ok_ui, ui = pcall(require, "ucore.ui.select")
-  if ok_ui and type(ui) == "table" and type(ui.input_sync) == "function" then
-    local ok_input, result = pcall(ui.input_sync, {
-      title = title,
-      default = default,
-      secret = true,
-    })
-    if ok_input then
-      return result
-    end
-  end
-
   vim.fn.inputsave()
   local ok, result
   if default ~= "" then
@@ -55,6 +43,25 @@ local function prompt_secret_input(title, default)
     return nil
   end
   return result
+end
+
+local function prompt_secret_input_async(title, default, callback)
+  title = tostring(title or "Input")
+  default = tostring(default or "")
+
+  local ok_ui, ui = pcall(require, "ucore.ui.select")
+  if ok_ui and type(ui) == "table" and type(ui.input) == "function" then
+    local ok_input = pcall(ui.input, {
+      title = title,
+      default = default,
+      secret = true,
+    }, callback)
+    if ok_input then
+      return
+    end
+  end
+
+  vim.ui.input({ prompt = title .. ": ", default = default }, callback)
 end
 
 local function first_error_line(stdout, stderr, fallback)
@@ -754,6 +761,77 @@ function M.checkout(path, root)
   end)
 end
 
+function M.login_async(callback)
+  prompt_secret_input_async("P4 password", "", function(password)
+    if not password or password == "" then
+      callback(false, "password is empty")
+      return
+    end
+
+    M.system_async(M.p4_cmd("login"), password .. "\n", function(stdout, stderr, code)
+      if code ~= 0 then
+        callback(false, first_error_line(stdout, stderr, "login failed"))
+        return
+      end
+      callback(true, nil)
+    end)
+  end)
+end
+
+function M.ensure_login_async(callback)
+  M.system_async(M.p4_cmd("login", {"-s"}), nil, function(stdout, stderr, code)
+    if code == 0 then
+      callback(true, nil)
+      return
+    end
+    M.login_async(callback)
+  end)
+end
+
+function M.checkout_async(path, root, callback)
+  path = sanitize(path)
+  local suspicious = is_suspicious_file_arg(path, root)
+  if suspicious then
+    callback(true, nil)
+    return
+  end
+  if vim.fn.filereadable(path) ~= 1 then
+    callback(false, "file not found: " .. path)
+    return
+  end
+
+  local function edit_once(retried)
+    M.system_async(M.p4_cmd("edit", {win_path(path)}), nil, function(stdout, stderr, code)
+      if code == 0 then
+        callback(true, nil)
+        return
+      end
+
+      local err = first_error_line(stdout, stderr, "p4 edit failed")
+      if not retried and is_login_error((stderr or "") .. "\n" .. (stdout or "")) then
+        M.login_async(function(login_ok, login_err)
+          if not login_ok then
+            callback(false, login_err or err)
+            return
+          end
+          edit_once(true)
+        end)
+        return
+      end
+
+      callback(false, err)
+    end)
+  end
+
+  M.ensure_login_async(function(login_ok, login_err)
+    if not login_ok then
+      callback(false, login_err)
+      return
+    end
+    edit_once(false)
+  end)
+end
+
 function M.diff(path, root)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, root)
@@ -962,6 +1040,10 @@ end
 
 function M.pending_changelists(root)
   local info = M.info()
+  return M.pending_changelists_with_info(root, info)
+end
+
+function M.pending_changelists_with_info(root, info)
   local client = info and info["client name"]
   local user = info and info["user name"]
   local args = {"-s", "pending"}
@@ -1105,53 +1187,69 @@ function M.status_async(root, cb)
 end
 
 function M.pending_changelists_async(root, cb)
-  M.info_async(function(info)
-    local client = info and info["client name"]
-    local user = info and info["user name"]
-    local args = {"-s", "pending"}
-    if client and client ~= "" then
-      vim.list_extend(args, {"-c", client})
+  M.info_async(function(info, err)
+    if err then
+      M.pending_changelists_with_info_async(root, nil, cb)
+      return
     end
-    if user and user ~= "" then
-      vim.list_extend(args, {"-u", user})
-    end
-    if not client or client == "" then
-      args[#args + 1] = root_pathspec(root)
-    end
-
-    local cmd = M.p4_cmd("changes", args)
-    M.system_async(cmd, nil, function(stdout, stderr, code)
-      if code ~= 0 then
-        cb({}, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 pending changes failed")
-        return
-      end
-      cb(parse_changes(stdout), nil)
-    end)
+    M.pending_changelists_with_info_async(root, info, cb)
   end)
 end
 
 function M.shelved_changelists_async(root, cb)
   M.info_async(function(info, err)
-    local user = info and info["user name"]
-    local args = user and {"-s", "shelved", "-u", user} or {"-s", "shelved"}
-    M.system_async(M.p4_cmd("changes", args), nil, function(stdout, stderr, code)
-      if code ~= 0 then
-        cb({}, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 shelved changes failed")
-        return
-      end
-      local changes = parse_changes(stdout)
-      if #changes == 0 and user then
-        M.system_async(M.p4_cmd("changes", {"-s", "shelved"}), nil, function(stdout2, stderr2, code2)
-          if code2 == 0 then
-            cb(parse_changes(stdout2), nil)
-          else
-            cb(changes, nil)
-          end
-        end)
-      else
-        cb(changes, nil)
-      end
-    end)
+    if err then
+      M.shelved_changelists_with_info_async(root, nil, cb)
+      return
+    end
+    M.shelved_changelists_with_info_async(root, info, cb)
+  end)
+end
+
+function M.pending_changelists_with_info_async(root, info, cb)
+  local client = info and info["client name"]
+  local user = info and info["user name"]
+  local args = {"-s", "pending"}
+  if client and client ~= "" then
+    vim.list_extend(args, {"-c", client})
+  end
+  if user and user ~= "" then
+    vim.list_extend(args, {"-u", user})
+  end
+  if not client or client == "" then
+    args[#args + 1] = root_pathspec(root)
+  end
+
+  local cmd = M.p4_cmd("changes", args)
+  M.system_async(cmd, nil, function(stdout, stderr, code)
+    if code ~= 0 then
+      cb({}, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 pending changes failed")
+      return
+    end
+    cb(parse_changes(stdout), nil)
+  end)
+end
+
+function M.shelved_changelists_with_info_async(root, info, cb)
+  local user = info and info["user name"]
+  local args = user and {"-s", "shelved", "-u", user} or {"-s", "shelved"}
+  M.system_async(M.p4_cmd("changes", args), nil, function(stdout, stderr, code)
+    if code ~= 0 then
+      cb({}, (stderr ~= "" and stderr or stdout):match("[^\r\n]+") or "p4 shelved changes failed")
+      return
+    end
+    local changes = parse_changes(stdout)
+    if #changes == 0 and user then
+      M.system_async(M.p4_cmd("changes", {"-s", "shelved"}), nil, function(stdout2, _stderr2, code2)
+        if code2 == 0 then
+          cb(parse_changes(stdout2), nil)
+        else
+          cb(changes, nil)
+        end
+      end)
+    else
+      cb(changes, nil)
+    end
   end)
 end
 
