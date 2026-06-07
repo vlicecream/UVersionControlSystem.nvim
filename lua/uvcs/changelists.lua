@@ -1,5 +1,13 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/changelists.lua
+-- Purpose: Render detailed views for pending and shelved changelists.
+-- License: MIT
+
 local M = {}
 
+-- Load changelist detail lines for one pending or shelved changelist.
+-- 加载一个待处理或搁置的变更列表的变更列表详细信息行。
 function M.detail(root, provider, change_num)
   local detail, err = provider.changelist_detail(change_num)
   if not detail then
@@ -100,6 +108,8 @@ function M.detail(root, provider, change_num)
   vim.api.nvim_set_current_buf(buf)
 end
 
+-- Create the scratch buffer used to display changelist detail output.
+-- 创建用于显示更改列表详细信息输出的暂存缓冲区。
 function M.create_detail_buffer(lines, change_num)
   vim.cmd("belowright 15new")
   local buf = vim.api.nvim_get_current_buf()

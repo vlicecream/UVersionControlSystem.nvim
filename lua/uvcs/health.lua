@@ -1,28 +1,46 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/health.lua
+-- Purpose: Report UVCS runtime prerequisites and provider status through :checkhealth.
+-- License: MIT
+
 local config = require("uvcs.config")
 local project = require("uvcs.project")
 
 local M = {}
 
+-- Start one :checkhealth section using the available Neovim health API.
+-- 使用可用的 Neovim health API 启动一个 :checkhealth 部分。
 local function start(message)
 	vim.health.start(message)
 end
 
+-- Report one successful health-check message.
+-- 报告一条成功的健康检查消息。
 local function ok(message)
 	vim.health.ok(message)
 end
 
+-- Report one informational health-check message.
+-- 报告一条信息性健康检查消息。
 local function info(message)
 	vim.health.info(message)
 end
 
+-- Report one warning health-check message with optional advice.
+-- 报告一条警告健康检查消息以及可选建议。
 local function warn(message, advice)
 	vim.health.warn(message, advice)
 end
 
+-- Render one boolean value as a human-readable yes-or-no string.
+-- 将一个布尔值呈现为人类可读的是或否字符串。
 local function yes_no(value)
 	return value and "yes" or "no"
 end
 
+-- Check UVCS configuration and Perforce prerequisites for the current environment.
+-- 检查当前环境的 UVCS 配置和 Perforce 先决条件。
 function M.check()
 	start("UVCS")
 

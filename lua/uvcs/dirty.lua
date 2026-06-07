@@ -1,5 +1,13 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/dirty.lua
+-- Purpose: Collect and optionally save dirty project buffers before version-control actions.
+-- License: MIT
+
 local M = {}
 
+-- Normalize one filesystem path to forward-slash form.
+-- 将一个文件系统路径规范为正斜杠形式。
 local function normalize(path)
   if not path or path == "" then
     return nil
@@ -7,6 +15,8 @@ local function normalize(path)
   return vim.fn.fnamemodify(path, ":p"):gsub("\\", "/")
 end
 
+-- Return whether one path belongs to the requested project root.
+-- 返回一个路径是否属于所请求的项目根目录。
 local function path_under_root(path, root)
   local p = normalize(path)
   local r = normalize(root)
@@ -21,6 +31,8 @@ local function path_under_root(path, root)
   return p:sub(1, #r) == r
 end
 
+-- Collect modified listed buffers that belong to one project root.
+-- 收集属于一个项目根目录的已修改的列出缓冲区。
 function M.collect(root)
   local files = {}
   local seen = {}
@@ -50,6 +62,8 @@ function M.collect(root)
   return files
 end
 
+-- Save the provided dirty buffers in place.
+-- 将提供的脏缓冲区保存到位。
 local function save_dirty_files(files)
   for _, file in ipairs(files or {}) do
     if vim.api.nvim_buf_is_valid(file.bufnr) and vim.bo[file.bufnr].modified then
@@ -69,6 +83,8 @@ local function save_dirty_files(files)
   return true, nil, nil
 end
 
+-- Prompt to save dirty files before continuing one UVCS action.
+-- 在继续一项 UVCS 操作之前提示保存脏文件。
 function M.confirm_save(root, opts, callback)
   opts = opts or {}
   callback = callback or function() end

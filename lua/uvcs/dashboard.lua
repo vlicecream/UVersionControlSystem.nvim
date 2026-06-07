@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/dashboard.lua
+-- Purpose: Render the UVCS dashboard and orchestrate asynchronous provider data loading.
+-- License: MIT
+
 local project = require("uvcs.project")
 local p4 = require("uvcs.p4")
 local cache = require("uvcs.cache")
@@ -43,16 +49,22 @@ for name, opts in pairs(HIGHLIGHTS) do
   pcall(vim.api.nvim_set_hl, 0, name, opts)
 end
 
+-- Split one path into filename and parent directory display parts.
+-- 将一个路径拆分为文件名和父目录显示部分。
 local function split_path(path)
   local name = vim.fn.fnamemodify(path, ":t")
   local dir = vim.fn.fnamemodify(path, ":h")
   return name, dir
 end
 
+-- Normalize one filesystem path to forward-slash form.
+-- 将一个文件系统路径规范为正斜杠形式。
 local function normalize_path(path)
   return tostring(path or ""):gsub("\\", "/")
 end
 
+-- Compact one directory path so it fits inside the available UI width.
+-- 压缩一个目录路径，使其适合可用的 UI 宽度。
 local function compact_directory(path, width)
   path = normalize_path(path)
   width = width or 28
@@ -73,6 +85,8 @@ local function compact_directory(path, width)
   return "..." .. tail
 end
 
+-- Return the display label used for one raw local file status.
+-- 返回用于一个原始本地文件状态的显示标签。
 local function file_status_label(raw_status)
   if raw_status == "open for add" or raw_status == "add" or raw_status == "a" or raw_status == "?" then
     return "add?"
@@ -80,18 +94,26 @@ local function file_status_label(raw_status)
   return "modify?"
 end
 
+-- Return whether one dashboard item should be treated as an add candidate.
+-- 返回是否应将一个仪表板项视为添加候选项。
 local function is_add_candidate(item)
   return item and item.kind == "file" and item.section == "local" and item.status == "add?"
 end
 
+-- Return whether one dashboard item should be treated as a modify candidate.
+-- 返回一个仪表板项目是否应被视为修改候选者。
 local function is_modify_candidate(item)
   return item and item.kind == "file" and item.section == "local" and item.status == "modify?"
 end
 
+-- Return whether one path should be displayed as a project file in the dashboard.
+-- 返回一个路径是否应在仪表板中显示为项目文件。
 local function is_dashboard_file(path)
   return p4.is_project_file(path, state and state.root or nil)
 end
 
+-- Return whether one dashboard section should be visible for the active filter.
+-- 返回一个仪表板部分是否应该对活动过滤器可见。
 local function should_show(section)
   if not state then
     return true
@@ -106,10 +128,14 @@ local function should_show(section)
   return true
 end
 
+-- Count the entries in one optional list-like table.
+-- 计算一个可选的类似列表的表中的条目数。
 local function count_values(values)
   return type(values) == "table" and #values or 0
 end
 
+-- Return cached dashboard counts from the most recent summary snapshot.
+-- 从最近的摘要快照返回缓存的仪表板计数。
 local function cached_counts()
   if not state or type(state.cached_summary) ~= "table" then
     return {}
@@ -117,21 +143,29 @@ local function cached_counts()
   return state.cached_summary.counts or {}
 end
 
+-- Return the cached count for one dashboard section key.
+-- 返回一个仪表板部分键的缓存计数。
 local function cached_count(key)
   local counts = cached_counts()
   return tonumber(counts[key] or 0) or 0
 end
 
+-- Return whether local reconcile scanning is currently deferred.
+-- 返回当前是否推迟本地协调扫描。
 local function deferred_local_scan()
   return state and state.defer_local_scan == true
 end
 
+-- Return whether writable-file scanning is currently deferred.
+-- 返回当前是否推迟可写文件扫描。
 local function deferred_writable_scan()
   return state and state.defer_writable_scan == true
 end
 
 local group_opened_by_changelist
 
+-- Return the display count text for one dashboard section.
+-- 返回一个仪表板部分的显示计数文本。
 local function section_count(section)
   if not state then
     return "0"
@@ -186,14 +220,20 @@ local function section_count(section)
   return "0"
 end
 
+-- Return the display count text for one dashboard section.
+-- 返回一个仪表板部分的显示计数文本。
 local function count_section(section)
   return section_count(section)
 end
 
+-- Return whether one dashboard row can be selected.
+-- 返回是否可以选择仪表板的某一行。
 local function is_selectable(row)
   return row and (row.kind == "file" or row.kind == "changelist" or row.kind == "shelved" or row.kind == "changelist_header" or row.kind == "shelf_header")
 end
 
+-- Normalize one changelist identifier into a stable display key.
+-- 将一个变更列表标识符标准化为稳定的显示键。
 local function normalize_change_id(change)
   change = vim.trim(tostring(change or ""))
   if change == "" or change == "0" then
@@ -219,6 +259,8 @@ group_opened_by_changelist = function(opened)
   return groups
 end
 
+-- Trim and collapse one changelist description for display.
+-- 修剪并折叠一个变更列表描述以供显示。
 local function clean_description(desc)
   desc = tostring(desc or ""):gsub("\r", " "):gsub("\n", " ")
   desc = vim.trim(desc)
@@ -228,6 +270,8 @@ local function clean_description(desc)
   return desc
 end
 
+-- Return the display description for one pending changelist.
+-- 返回一个待处理变更列表的显示说明。
 local function pending_description(change)
   change = normalize_change_id(change)
   if not state or change == "default" then
@@ -245,6 +289,8 @@ local function pending_description(change)
   return "Change " .. tostring(change)
 end
 
+-- Trim display text to the requested width with ellipsis when needed.
+-- 需要时将显示文本修剪为请求的宽度并使用省略号。
 local function trim_display(text, max_width)
   text = tostring(text or "")
   if vim.fn.strdisplaywidth(text) <= max_width then
@@ -253,6 +299,8 @@ local function trim_display(text, max_width)
   return vim.fn.strcharpart(text, 0, math.max(1, max_width - 1)) .. "…"
 end
 
+-- Return the placeholder text shown while one dashboard section is loading.
+-- 返回加载仪表板部分时显示的占位符文本。
 local function loading_message(section)
   if not state or not state.loading[section] then
     return nil
@@ -272,6 +320,8 @@ local function loading_message(section)
   return "  (loading...)"
 end
 
+-- Return the placeholder text shown for deferred or running local scans.
+-- 返回为延迟或运行本地扫描显示的占位符文本。
 local function local_scan_message()
   if deferred_local_scan() then
     return "  (press R to scan local files)"
@@ -282,6 +332,8 @@ local function local_scan_message()
   return nil
 end
 
+-- Return the placeholder text shown for deferred or running writable scans.
+-- 返回为延迟或运行可写扫描显示的占位符文本。
 local function writable_scan_message()
   if deferred_writable_scan() then
     return "  (press R to scan writable files)"
@@ -292,6 +344,8 @@ local function writable_scan_message()
   return nil
 end
 
+-- Return the error message displayed for one failed dashboard section.
+-- 返回针对一个失败的仪表板部分显示的错误消息。
 local function error_message(section)
   if not state then
     return nil
@@ -303,6 +357,8 @@ local function error_message(section)
   return "  (" .. tostring(err) .. ")"
 end
 
+-- Rebuild the selectable dashboard rows from the current provider data.
+-- 从当前提供者数据重建可选择的仪表板行。
 local function rebuild_rows()
   if not state then
     return
@@ -555,6 +611,8 @@ local function rebuild_rows()
   state.rows = rows
 end
 
+-- Move the cursor to the first selectable dashboard row.
+-- 将光标移至第一个可选择的仪表板行。
 local function cursor_to_first_selectable()
   if not state then return end
   for _, kind in ipairs({ "changelist_header", "shelf_header", "file", "changelist", "shelved" }) do
@@ -568,11 +626,15 @@ local function cursor_to_first_selectable()
   state.cursor = 1
 end
 
+-- Return the currently selected dashboard item.
+-- 返回当前选定的仪表板项目。
 local function get_current_item()
   if not state then return nil end
   return state.rows[state.cursor]
 end
 
+-- Find a loaded buffer visiting the requested path.
+-- 查找访问请求路径的已加载缓冲区。
 local function find_loaded_buffer(path)
   if not path or path == "" then
     return nil
@@ -589,6 +651,8 @@ local function find_loaded_buffer(path)
   return nil
 end
 
+-- Reload one buffer from disk after external file changes.
+-- 外部文件更改后，从磁盘重新加载一个缓冲区。
 local function reload_buffer_from_disk(path)
   local bufnr = find_loaded_buffer(path)
   if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -599,6 +663,8 @@ local function reload_buffer_from_disk(path)
   end)
 end
 
+-- Move the dashboard selection cursor by the requested delta.
+-- 将仪表板选择光标移动请求的增量。
 local function move_cursor(delta)
   if not state then return end
   local n = #state.rows
@@ -617,10 +683,14 @@ local function move_cursor(delta)
   end
 end
 
+-- Return whether the current screen can fit the full dashboard layout.
+-- 返回当前屏幕是否适合完整的仪表板布局。
 local function will_fit()
   return vim.o.columns >= 82 and vim.o.lines >= 24
 end
 
+-- Open or reuse the windows that make up the dashboard layout.
+-- 打开或重复使用构成仪表板布局的窗口。
 local function open_windows()
   if not will_fit() then
     vim.notify("UVCS: terminal too small for dashboard", vim.log.levels.WARN)
@@ -720,6 +790,8 @@ local function open_windows()
   return result
 end
 
+-- Close all dashboard windows and clear their transient state.
+-- 关闭所有仪表板窗口并清除其瞬态。
 function M.close()
   if not state then return end
   if autocmd_group then
@@ -740,6 +812,8 @@ function M.close()
   state = nil
 end
 
+-- Build the status-line text shown in the dashboard header.
+-- 构建仪表板标题中显示的状态行文本。
 local function render_status_text()
   if not state then
     return "closed"
@@ -774,6 +848,8 @@ local DASHBOARD_FOOTER_SHORT_ITEMS = {
   { key = "q",   label = "close" },
 }
 
+-- Return the footer shortcuts that apply to the current selection.
+-- 返回适用于当前选择的页脚快捷方式。
 local function footer_items_for_current()
   local item = get_current_item()
   if item and item.kind == "file" and item.section == "writable" then
@@ -784,6 +860,8 @@ local function footer_items_for_current()
   return DASHBOARD_FOOTER_ITEMS
 end
 
+-- Return the compact footer shortcuts for narrow dashboard layouts.
+-- 返回狭窄仪表板布局的紧凑页脚快捷方式。
 local function footer_short_items_for_current()
   local item = get_current_item()
   if item and item.kind == "file" and item.section == "writable" then
@@ -794,6 +872,8 @@ local function footer_short_items_for_current()
   return DASHBOARD_FOOTER_SHORT_ITEMS
 end
 
+-- Build one footer shortcut line for the current layout width.
+-- 为当前布局宽度构建一根页脚快捷方式线。
 local function build_shortcut_line(width, items, short_items, opts)
   opts = opts or {}
   local padding = opts.padding or 2
@@ -850,6 +930,8 @@ local function build_shortcut_line(width, items, short_items, opts)
   return fallback, {}
 end
 
+-- Pad one text fragment to the requested display width.
+-- 将一个文本片段填充到请求的显示宽度。
 local function pad_to_width(text, width)
   local pad = width - vim.fn.strdisplaywidth(text)
   if pad <= 0 then
@@ -860,6 +942,8 @@ end
 
 local HEADER_PADDING = 2
 
+-- Compose one dashboard header line from left, center, and right sections.
+-- 从左、中、右三个部分组成一个仪表板标题行。
 local function compose_header(left, center, right, width)
   local inner_width = math.max(1, width - HEADER_PADDING * 2)
   local left_w = vim.fn.strdisplaywidth(left)
@@ -882,6 +966,8 @@ local function compose_header(left, center, right, width)
   return string.rep(" ", HEADER_PADDING) .. line .. string.rep(" ", HEADER_PADDING + right_padding)
 end
 
+-- Apply one highlight pattern to a rendered dashboard line.
+-- 将一种突出显示图案应用于渲染的仪表板线。
 local function add_pattern_highlight(buf, line, text, pattern, group)
   local start_col = text:find(pattern, 1, true)
   if start_col then
@@ -889,6 +975,8 @@ local function add_pattern_highlight(buf, line, text, pattern, group)
   end
 end
 
+-- Render the dashboard header window.
+-- 渲染仪表板标题窗口。
 function M.render_header()
   if not state or not state.wins then return end
   local buf = state.wins.header_buf
@@ -911,6 +999,8 @@ function M.render_header()
   vim.bo[buf].modifiable = false
 end
 
+-- Render the dashboard footer window.
+-- 渲染仪表板页脚窗口。
 function M.render_footer()
   if not state or not state.wins or not state.wins.footer_buf then return end
   local buf = state.wins.footer_buf
@@ -928,6 +1018,8 @@ function M.render_footer()
   vim.bo[buf].modifiable = false
 end
 
+-- Render the dashboard list pane.
+-- 渲染仪表板列表窗格。
 function M.render_left()
   if not state or not state.wins then return end
   local buf = state.wins.left_buf
@@ -1063,6 +1155,8 @@ function M.render_left()
   end
 end
 
+-- Replace the right preview pane with the provided lines and filetype.
+-- 将右侧预览窗格替换为提供的行和文件类型。
 local function set_right_lines(lines, ft)
   if not state or not state.wins then return end
   local buf = state.wins.right_buf
@@ -1095,6 +1189,8 @@ local function set_right_lines(lines, ft)
   end
 end
 
+-- Render the right-pane summary for one file item.
+-- 呈现一个文件项的右窗格摘要。
 local function render_file_summary(item)
   if item.section == "writable" then
     local lines = {
@@ -1130,6 +1226,8 @@ local function render_file_summary(item)
   }, "uvcs-vcs-detail")
 end
 
+-- Render the right-pane summary for one changelist item.
+-- 呈现一项变更列表项的右窗格摘要。
 local function render_change_summary(item)
   local label = item.kind == "shelved" and "Shelved Change" or "Change"
   set_right_lines({
@@ -1145,6 +1243,8 @@ local function render_change_summary(item)
   }, "uvcs-vcs-detail")
 end
 
+-- Load diff content for one file item into the right pane cache.
+-- 将一个文件项的差异内容加载到右窗格缓存中。
 function load_file_diff(item)
   if not state or not item or not item.path then return end
   if vim.fn.filereadable(item.path) ~= 1 then return end
@@ -1167,6 +1267,8 @@ function load_file_diff(item)
   end)
 end
 
+-- Load shelved diff content for one shelf file into the right pane cache.
+-- 将一个架文件的搁置差异内容加载到右窗格缓存中。
 function load_shelf_diff(change_num, file)
   if not state then return end
   local cache_key = "shelf_diff:" .. tostring(change_num)
@@ -1191,6 +1293,8 @@ function load_shelf_diff(change_num, file)
   end)
 end
 
+-- Render the dashboard preview pane.
+-- 渲染仪表板预览窗格。
 function M.render_right()
   if not state or not state.wins then return end
   local item = get_current_item()
@@ -1328,6 +1432,8 @@ function M.render_right()
   set_right_lines({ "Diff / Preview", "", "No preview available." }, "uvcs-vcs-detail")
 end
 
+-- Render all dashboard panes from the current in-memory state.
+-- 从当前内存状态渲染所有仪表板窗格。
 local function render_all(keep_cursor)
   if not state then return end
   local old_item = get_current_item()
@@ -1351,6 +1457,8 @@ local function render_all(keep_cursor)
   M.render_footer()
 end
 
+-- Coalesce repeated render requests into one deferred dashboard redraw.
+-- 将重复的渲染请求合并到一个延迟的仪表板重绘中。
 local function schedule_render()
   if not state or state.render_scheduled then
     return
@@ -1365,6 +1473,8 @@ local function schedule_render()
   end, 50)
 end
 
+-- Load detail data for the currently selected changelist item.
+-- 加载当前选定的更改列表项的详细数据。
 local function load_changelist_detail(item)
   if not state or not item or not item.number then return end
   local cache_key = item.kind .. ":" .. tostring(item.number)
@@ -1383,6 +1493,8 @@ local function load_changelist_detail(item)
   end)
 end
 
+-- Mark the sections required by the active filter as loading.
+-- 将有源滤波器所需的部分标记为正在加载。
 local function set_loading_for_filter()
   local filter = state.filter or "all"
   local load_file_section = filter ~= "shelved"
@@ -1395,12 +1507,16 @@ local function set_loading_for_filter()
   state.defer_writable_scan = load_file_section and not should_scan_local
 end
 
+-- Mark one dashboard section as finished loading and store any error text.
+-- 将一个仪表板部分标记为已完成加载并存储所有错误文本。
 local function mark_done(section, err)
   if not state then return end
   state.loading[section] = false
   state.data.errors[section] = err
 end
 
+-- Return whether all requested dashboard sections have finished loading.
+-- 返回所有请求的仪表板部分是否已完成加载。
 local function is_ready()
   return not state.loading.info
       and not state.loading.files
@@ -1408,13 +1524,19 @@ local function is_ready()
       and not state.loading.writable
 end
 
+-- Update the dashboard ready flag from the current loading state.
+-- 从当前加载状态更新仪表板就绪标志。
 local function update_ready_status()
   if state and is_ready() then
     state.status = "ready"
   end
 end
 
+-- Persist a lightweight dashboard summary after loading has settled.
+-- 加载完成后保留轻量级仪表板摘要。
 local function maybe_save_cache()
+  -- Cache only stable summary data here. The dashboard can reopen almost
+  -- instantly from counts + info, while detailed file lists still refresh in background.
   if not state or state.loading.info or state.loading.files or state.loading.shelved or state.loading.writable then
     return
   end
@@ -1444,6 +1566,8 @@ local function maybe_save_cache()
   }
 end
 
+-- Load dashboard data from the active provider and cache-aware fast paths.
+-- 从活动提供程序和缓存感知快速路径加载仪表板数据。
 function M.load_data()
   if not state then return end
   local root = state.root
@@ -1481,6 +1605,8 @@ function M.load_data()
     maybe_save_cache()
     schedule_render()
 
+    -- Reuse the same `p4 info` result for dependent requests so the dashboard
+    -- does not pay extra round trips just to rediscover client and user metadata.
     p4.pending_changelists_with_info_async(root, info, function(changes, pending_err)
       if not state or state.token ~= token then return end
       state.data.pending = changes or {}
@@ -1516,8 +1642,12 @@ function M.load_data()
   end)
 
   if state.loading.files then
+    -- `opened` is the first result that can paint a useful file list, so
+    -- let it drive first paint while slower reconcile work fills in later.
     local pending_files = should_scan_local and 2 or 1
     local file_errors = {}
+    -- Record completion for one file-oriented async request and trigger follow-up rendering.
+    -- 记录单个文件相关异步请求的完成状态，并触发后续渲染。
     local function done_files(kind, err)
       if err then table.insert(file_errors, kind .. ": " .. tostring(err)) end
       pending_files = pending_files - 1
@@ -1569,6 +1699,8 @@ function M.load_data()
   schedule_render()
 end
 
+-- Register the dashboard keymaps.
+-- 注册仪表板键盘映射。
 local function setup_keymaps()
   if not state or not state.wins then return end
   local buf = state.wins.left_buf
@@ -1861,6 +1993,8 @@ q/Esc    Close dashboard
   end
 end
 
+-- Refresh dashboard data, optionally forcing local scans.
+-- 刷新仪表板数据，可以选择强制进行本地扫描。
 function M.refresh(opts)
   if not state then return end
   opts = opts or {}
@@ -1872,6 +2006,8 @@ function M.refresh(opts)
   M.load_data()
 end
 
+-- Open the dashboard windows and start loading data.
+-- 打开仪表板窗口并开始加载数据。
 function M.open(opts)
   opts = opts or {}
 

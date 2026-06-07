@@ -1,9 +1,19 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/project.lua
+-- Purpose: Resolve Unreal project roots and project files for UVCS commands.
+-- License: MIT
+
 local M = {}
 
+-- Normalize one filesystem path to forward-slash form.
+-- 将一个文件系统路径规范为正斜杠形式。
 local function normalize(path)
 	return path and path:gsub("\\", "/") or nil
 end
 
+-- Search upward from one path until a .uproject file is found.
+-- 从一个路径向上搜索，直到找到 .uproject 文件。
 function M.find_project_file(start_path)
 	start_path = start_path or vim.api.nvim_buf_get_name(0)
 
@@ -34,6 +44,8 @@ function M.find_project_file(start_path)
 	return found and normalize(found) or nil
 end
 
+-- Return the project root directory for one path inside an Unreal project.
+-- 返回虚幻项目内一个路径的项目根目录。
 function M.find_project_root(start_path)
 	local project_file = M.find_project_file(start_path)
 	if not project_file then
@@ -43,6 +55,8 @@ function M.find_project_root(start_path)
 	return normalize(vim.fn.fnamemodify(project_file, ":p:h"))
 end
 
+-- Resolve the active project root from the current editor context.
+-- 从当前编辑器上下文解析活动项目根。
 function M.find_project_root_from_context()
 	local buf_path = vim.api.nvim_buf_get_name(0)
 	if buf_path and buf_path ~= "" then

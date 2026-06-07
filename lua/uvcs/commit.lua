@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/commit.lua
+-- Purpose: Render the commit buffer and submit selected files through the active provider.
+-- License: MIT
+
 local project = require("uvcs.project")
 local vcs = require("uvcs")
 
@@ -24,6 +30,8 @@ for name, opts in pairs(HIGHLIGHTS) do
   pcall(vim.api.nvim_set_hl, 0, name, opts)
 end
 
+-- Open the commit buffer for one project root and optional preselected files.
+-- 打开一个项目根目录和可选的预选文件的提交缓冲区。
 function M.open(root, opts)
   opts = opts or {}
   if not root then
@@ -77,6 +85,8 @@ function M.open(root, opts)
   vim.cmd("startinsert!")
 end
 
+-- Build commit file entries from raw filesystem paths.
+-- 从原始文件系统路径构建提交文件条目。
 function M.build_files_from_paths(provider, root, paths)
   local local_path = root:gsub("/", "\\") .. "\\"
   local files = {}
@@ -98,6 +108,8 @@ function M.build_files_from_paths(provider, root, paths)
   return files
 end
 
+-- Collect the file list that should appear in the commit buffer.
+-- 收集应出现在提交缓冲区中的文件列表。
 function M.collect_commit_files(provider, root)
   local local_path = root:gsub("/", "\\") .. "\\"
 
@@ -158,6 +170,8 @@ function M.collect_commit_files(provider, root)
   return files
 end
 
+-- Attach display metadata and provider state to commit file entries.
+-- 附加显示元数据和提供程序状态以提交文件条目。
 function M.decorate_files(provider, root, files)
   if provider.name() ~= "p4" then
     return
@@ -184,6 +198,8 @@ function M.decorate_files(provider, root, files)
   end
 end
 
+-- Group commit file entries into the sections rendered by the UI.
+-- 将提交文件条目分组到 UI 呈现的部分中。
 function M.group_files(files)
   local order = {}
   local groups = {}
@@ -215,6 +231,8 @@ function M.group_files(files)
   return result
 end
 
+-- Build the display label for one changelist selector entry.
+-- 为一个变更列表选择器条目构建显示标签。
 local function changelist_label(change)
   if change == "default" then
     return "Default changelist"
@@ -225,6 +243,8 @@ local function changelist_label(change)
   return "Changelist " .. tostring(change)
 end
 
+-- Build the text lines rendered by the commit buffer.
+-- 构建由提交缓冲区呈现的文本行。
 function M.build_buffer_lines(provider, root, files, groups)
   local proj_name = vim.fn.fnamemodify(root, ":t")
   local layout = { file_lines = {} }
@@ -278,6 +298,8 @@ local COMMIT_FOOTER_SHORT_ITEMS = {
   { key = "q",      label = "close" },
 }
 
+-- Build one footer shortcut line for the current commit buffer width.
+-- 为当前提交缓冲区宽度构建一个页脚快捷方式行。
 local function build_shortcut_line(width, items, short_items, opts)
   opts = opts or {}
   local padding = opts.padding or 2
@@ -334,6 +356,8 @@ local function build_shortcut_line(width, items, short_items, opts)
   return fallback, {}
 end
 
+-- Create the commit scratch buffer and attach its state tables.
+-- 创建提交临时缓冲区并附加其状态表。
 function M.create_buffer(lines, provider, root, files)
   local width = math.min(vim.o.columns - 8, 120)
   local min_height = math.min(14, math.max(1, vim.o.lines - 6))
@@ -373,6 +397,8 @@ function M.create_buffer(lines, provider, root, files)
   return buf, win
 end
 
+-- Render the footer hints shown at the bottom of the commit buffer.
+-- 渲染提交缓冲区底部显示的页脚提示。
 function M.render_footer(buf, win, width)
   if not commit_state then return end
   local line, spans = build_shortcut_line(width, COMMIT_FOOTER_ITEMS, COMMIT_FOOTER_SHORT_ITEMS, {
@@ -389,22 +415,30 @@ function M.render_footer(buf, win, width)
   commit_state.footer_spans = spans
 end
 
+-- Return the commit file entry rendered at one buffer line.
+-- 返回在一个缓冲区行呈现的提交文件条目。
 function M.get_file_at_line(buf, line)
   if not commit_state then return nil end
   return commit_state.file_lines[line], line
 end
 
+-- Return whether one line corresponds to a selectable file entry.
+-- 返回一行是否对应于一个可选择的文件条目。
 function M.is_file_line(buf, line)
   if not commit_state then return false end
   return commit_state.file_lines[line] ~= nil
 end
 
+-- Return whether one line belongs to the editable commit message area.
+-- 返回一行是否属于可编辑提交消息区域。
 function M.is_message_line(buf, line)
   if not commit_state then return false end
   return line >= (commit_state.message_start + 1)
       and line < commit_state.separator_line
 end
 
+-- Apply syntax highlighting to the commit buffer.
+-- 将语法突出显示应用于提交缓冲区。
 function M.apply_highlights(buf)
   if not commit_state then return end
   vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
@@ -443,6 +477,8 @@ function M.apply_highlights(buf)
   end
 end
 
+-- Toggle whether one file entry is selected for submission.
+-- 切换是否选择一个文件条目进行提交。
 function M.toggle_file(buf)
   local cur_line = vim.api.nvim_win_get_cursor(0)[1]
   if not M.is_file_line(buf, cur_line) then
@@ -461,6 +497,8 @@ function M.toggle_file(buf)
   M.apply_highlights(buf)
 end
 
+-- Add the current file into the commit selection list.
+-- 将当前文件添加到提交选择列表中。
 function M.add_file(buf)
   local cur_line = vim.api.nvim_win_get_cursor(0)[1]
   if not M.is_file_line(buf, cur_line) then
@@ -496,6 +534,8 @@ function M.add_file(buf)
   end
 end
 
+-- Return the current commit message text from the commit buffer.
+-- 从提交缓冲区返回当前提交消息文本。
 function M.get_message(buf)
   if not commit_state then return "" end
   local start = commit_state.message_start + 1
@@ -513,6 +553,8 @@ function M.get_message(buf)
   return table.concat(msg, "\n"):gsub("^[\r\n]+", ""):gsub("[\r\n]+$", "")
 end
 
+-- Return the files currently selected for submission.
+-- 返回当前选择提交的文件。
 function M.get_checked_files(buf)
   if not commit_state then return {} end
   local checked = {}
@@ -524,6 +566,8 @@ function M.get_checked_files(buf)
   return checked
 end
 
+-- Return the changelists referenced by the selected files.
+-- 返回所选文件引用的更改列表。
 function M.get_checked_changelists(files)
   local groups = {}
   for _, f in ipairs(files or {}) do
@@ -534,6 +578,8 @@ function M.get_checked_changelists(files)
   return groups
 end
 
+-- Submit the selected files and commit message through the provider.
+-- 通过提供者提交选定的文件并提交消息。
 function M.submit(buf, skip_dirty_check)
   if not commit_state then return end
 
@@ -615,6 +661,8 @@ function M.submit(buf, skip_dirty_check)
   end
 end
 
+-- Open a diff preview for the currently selected file entry.
+-- 打开当前选定文件条目的差异预览。
 function M.diff_file(buf)
   local cur_line = vim.api.nvim_win_get_cursor(0)[1]
   if not M.is_file_line(buf, cur_line) then
@@ -652,6 +700,8 @@ function M.diff_file(buf)
   vim.bo[dbuf].modified = false
 end
 
+-- Revert the currently selected file entry from the commit UI.
+-- 从提交 UI 恢复当前选定的文件条目。
 function M.revert_file(buf)
   local cur_line = vim.api.nvim_win_get_cursor(0)[1]
   if not M.is_file_line(buf, cur_line) then
@@ -686,11 +736,15 @@ function M.revert_file(buf)
   commit_state = nil
 end
 
+-- Close the commit buffer and any windows showing it.
+-- 关闭提交缓冲区和所有显示它的窗口。
 function M.close(buf)
   vim.api.nvim_buf_delete(buf, { force = true })
   commit_state = nil
 end
 
+-- Register the commit-buffer keymaps.
+-- 注册提交缓冲区键盘映射。
 function M.setup_keymaps(buf)
   local opts = { buffer = buf, nowait = true, silent = true }
 

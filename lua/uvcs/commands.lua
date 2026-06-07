@@ -1,8 +1,16 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/commands.lua
+-- Purpose: Implement and dispatch :UVCS user commands.
+-- License: MIT
+
 local project = require("uvcs.project")
 local uvcs = require("uvcs")
 
 local M = {}
 
+-- Create a scratch buffer for UVCS command output.
+-- 为 UVCS 命令输出创建临时缓冲区。
 local function scratch(title, lines)
 	vim.cmd("botright new")
 	local buf = vim.api.nvim_get_current_buf()
@@ -15,6 +23,8 @@ local function scratch(title, lines)
 	vim.bo[buf].modified = false
 end
 
+-- Run an interactive Perforce login and report the result.
+-- 运行交互式 Perforce 登录并报告结果。
 function M.login()
 	local ok, result, err = pcall(function()
 		return require("uvcs.p4").login()
@@ -29,10 +39,14 @@ function M.login()
 	vim.notify("UVCS: P4 login failed: " .. tostring(message), vim.log.levels.ERROR)
 end
 
+-- Open the UVCS dashboard.
+-- 打开 UVCS 仪表板。
 function M.dashboard()
 	uvcs.open_dashboard("all")
 end
 
+-- Return the current buffer path after validating that one file is open.
+-- 验证一个文件已打开后返回当前缓冲区路径。
 local function current_path()
 	local path = vim.api.nvim_buf_get_name(0)
 	if path == "" then
@@ -43,6 +57,8 @@ local function current_path()
 	return path
 end
 
+-- Return the active VCS provider for one path when the command is supported.
+-- 当支持该命令时，返回一条路径的活动 VCS 提供程序。
 local function current_provider(path)
 	local provider = uvcs.detect_for_path(path)
 	if not provider then
@@ -58,10 +74,14 @@ local function current_provider(path)
 	return provider
 end
 
+-- Open the visual commit UI for the current project.
+-- 打开当前项目的可视化提交 UI。
 function M.commit()
 	uvcs.open_commit_ui(nil, nil)
 end
 
+-- Check out the current file through the active provider.
+-- 通过活动提供程序查看当前文件。
 function M.checkout()
 	local path = current_path()
 	if not path then
@@ -82,6 +102,8 @@ function M.checkout()
 	end
 end
 
+-- Add the current file through the active provider.
+-- 通过活动提供程序添加当前文件。
 function M.add()
 	local path = current_path()
 	if not path then
@@ -106,6 +128,8 @@ function M.add()
 	end
 end
 
+-- Revert the current file after explicit user confirmation.
+-- 用户明确确认后恢复当前文件。
 function M.revert()
 	local path = current_path()
 	if not path then
@@ -147,6 +171,8 @@ function M.revert()
 	end
 end
 
+-- Print the pending changelists for the current Perforce workspace.
+-- 打印当前 Perforce 工作区的待处理变更列表。
 function M.pending_changelists()
 	local buf_path = vim.api.nvim_buf_get_name(0)
 	local root = buf_path ~= "" and project.find_project_root(buf_path) or nil
@@ -171,6 +197,8 @@ function M.pending_changelists()
 	print(vim.inspect(changes))
 end
 
+-- Open a scratch buffer with current UVCS and Perforce diagnostics.
+-- 使用当前 UVCS 和 Perforce 诊断打开临时缓冲区。
 function M.debug()
 	local path = vim.api.nvim_buf_get_name(0)
 	local root = project.find_project_root(path)
@@ -227,6 +255,8 @@ function M.debug()
 	scratch("UVCS Debug", lines)
 end
 
+-- Print the main :UVCS help text.
+-- 打印 :UVCS 主帮助文本。
 function M.help()
 	print([[
 UVCS commands:
@@ -242,6 +272,8 @@ UVCS commands:
 ]])
 end
 
+-- Print the :UVCS debug help text.
+-- 打印 :UVCS debug 子命令的帮助文本。
 function M.debug_help()
 	print([[
 UVCS debug commands:
@@ -251,6 +283,8 @@ UVCS debug commands:
 ]])
 end
 
+-- Split one command string into the first token and remaining tail.
+-- 将一个命令字符串拆分为第一个标记和剩余的尾部。
 local function split_first(text)
 	local head, tail = (text or ""):match("^%s*(%S*)%s*(.-)%s*$")
 	if head == "" then
@@ -260,6 +294,8 @@ local function split_first(text)
 	return head:lower(), tail or ""
 end
 
+-- Dispatch one UVCS debug subcommand.
+-- 调度一个 UVCS 调试子命令。
 local function dispatch_debug(tail)
 	local sub = split_first(tail)
 	local handlers = {
@@ -276,6 +312,8 @@ local function dispatch_debug(tail)
 	handler()
 end
 
+-- Dispatch one :UVCS command invocation.
+-- 调度一：UVCS 命令调用。
 function M.dispatch(args)
 	local input = args.args or ""
 	if vim.trim(input) == "" then
@@ -304,6 +342,8 @@ function M.dispatch(args)
 	handler()
 end
 
+-- Register the :UVCS user command and its completion handler.
+-- 注册 :UVCS 用户命令及其完成处理程序。
 function M.register()
 	pcall(vim.api.nvim_del_user_command, "UVCS")
 

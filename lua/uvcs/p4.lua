@@ -1,16 +1,28 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/p4.lua
+-- Purpose: Wrap Perforce commands, parsing, and asynchronous workflows for the UVCS provider.
+-- License: MIT
+
 local config = require("uvcs.config")
 
 local M = {}
 
+-- Sanitize one string before passing it into a Perforce command.
+-- 在将字符串传递到 Perforce 命令之前对其进行清理。
 local function sanitize(path)
   if not path then return "" end
   return tostring(path):gsub("\0", "")
 end
 
+-- Convert one path to Windows separators for Perforce tools that expect native paths.
+-- 对于需要本机路径的 Perforce 工具，将一个路径转换为 ​​Windows 分隔符。
 local function win_path(path)
   return (sanitize(path):gsub("/", "\\"))
 end
 
+-- Return whether one file argument looks unsafe to pass to Perforce.
+-- 返回一个文件参数是否看起来不安全，无法传递给 Perforce。
 local function is_suspicious_file_arg(path, root)
   path = sanitize(path)
   if path == "" or path == "0" or path:match("[/\\]0$") then
@@ -22,10 +34,14 @@ local function is_suspicious_file_arg(path, root)
   return false, nil
 end
 
+-- Return whether one executable is available on PATH.
+-- 返回 PATH 上是否有一个可执行文件可用。
 local function executable(name)
   return vim.fn.executable(name) == 1
 end
 
+-- Prompt for hidden input through the command line.
+-- 通过命令行提示隐藏输入。
 local function prompt_secret_input(title, default)
   title = tostring(title or "Input")
   default = tostring(default or "")
@@ -45,6 +61,8 @@ local function prompt_secret_input(title, default)
   return result
 end
 
+-- Prompt for hidden input through the best available async UI.
+-- 通过最佳可用的异步 UI 提示隐藏输入。
 local function prompt_secret_input_async(title, default, callback)
   title = tostring(title or "Input")
   default = tostring(default or "")
@@ -64,11 +82,15 @@ local function prompt_secret_input_async(title, default, callback)
   vim.ui.input({ prompt = title .. ": ", default = default }, callback)
 end
 
+-- Return the first meaningful error line from stdout or stderr.
+-- 从 stdout 或 stderr 返回第一个有意义的错误行。
 local function first_error_line(stdout, stderr, fallback)
   local text = stderr ~= "" and stderr or stdout
   return tostring(text or ""):match("[^\r\n]+") or fallback
 end
 
+-- Return whether one Perforce error message indicates an expired or missing login.
+-- 返回一条 Perforce 错误消息是否指示登录已过期或丢失。
 local function is_login_error(text)
   text = tostring(text or ""):lower()
   if text == "" then
@@ -83,7 +105,11 @@ local function is_login_error(text)
       or text:find("your session has expired", 1, true) ~= nil
 end
 
+-- Run one Perforce operation and retry after login when authentication expired.
+-- 运行一项 Perforce 操作，并在身份验证过期后登录后重试。
 local function run_with_login_retry(op)
+  -- Centralize login recovery here so every sync command gets the same
+  -- ticket-expiry behavior instead of duplicating retry logic at each callsite.
   if M.needs_login() then
     local login_ok, login_err = M.login()
     if not login_ok then
@@ -108,10 +134,14 @@ local function run_with_login_retry(op)
   return op()
 end
 
+-- Return the provider name for the Perforce backend.
+-- 返回 Perforce 后端的提供者名称。
 function M.name()
   return "p4"
 end
 
+-- Build the environment overrides used for Perforce commands.
+-- 构建用于 Perforce 命令的环境覆盖。
 function M.build_env()
   local vcs_p4 = (config.values.vcs or {}).p4 or {}
   local env = {}
@@ -143,6 +173,8 @@ function M.build_env()
   return env
 end
 
+-- Return whether the user configured explicit Perforce overrides.
+-- 返回用户是否配置了显式 Perforce 覆盖。
 function M.has_user_overrides()
   local vcs_p4 = (config.values.vcs or {}).p4 or {}
   return vcs_p4.port ~= nil
@@ -153,6 +185,8 @@ function M.has_user_overrides()
       or (vcs_p4.env ~= nil and next(vcs_p4.env) ~= nil)
 end
 
+-- Return whether Perforce config comes from user overrides or ambient environment.
+-- 返回 Perforce 配置是否来自用户覆盖或周围环境。
 function M.config_source()
   if M.has_user_overrides() then
     return "user override"
@@ -160,6 +194,8 @@ function M.config_source()
   return "default environment"
 end
 
+-- Build a sanitized p4 command with one subcommand and extra arguments.
+-- 使用一个子命令和额外参数构建一个经过清理的 p4 命令。
 function M.p4_cmd(subcommand, args)
   local vcs_p4 = (config.values.vcs or {}).p4 or {}
   local cmd = { vcs_p4.command or "p4", subcommand }
@@ -169,6 +205,8 @@ function M.p4_cmd(subcommand, args)
   return cmd
 end
 
+-- Build a raw p4 command without sanitizing the provided arguments.
+-- 构建原始 p4 命令而不清理提供的参数。
 local function p4_raw_cmd(args)
   local vcs_p4 = (config.values.vcs or {}).p4 or {}
   local cmd = { vcs_p4.command or "p4" }
@@ -178,6 +216,8 @@ local function p4_raw_cmd(args)
   return cmd
 end
 
+-- Merge Perforce environment overrides into one vim.system options table.
+-- 将 Perforce 环境覆盖合并到一个 vim.system 选项表中。
 local function apply_env(opts)
   local env = M.build_env()
   if next(env) == nil then
@@ -192,6 +232,8 @@ local function apply_env(opts)
   return opts
 end
 
+-- Parse `p4 info` output into a keyed table.
+-- 将“p4 info”输出解析到键控表中。
 local function parse_info(result)
   local info = {}
   for line in tostring(result or ""):gmatch("[^\r\n]+") do
@@ -203,6 +245,8 @@ local function parse_info(result)
   return info
 end
 
+-- Parse `p4 changes` output into changelist entries.
+-- 将“p4 Changes”输出解析为更改列表条目。
 local function parse_changes(result)
   local changes = {}
   for line in tostring(result or ""):gmatch("[^\r\n]+") do
@@ -222,6 +266,8 @@ local function parse_changes(result)
   return changes
 end
 
+-- Normalize one changelist identifier into a stable string key.
+-- 将一个变更列表标识符规范化为稳定的字符串键。
 local function normalize_change_id(change)
   change = vim.trim(tostring(change or ""))
   if change == "" or change == "0" then
@@ -241,6 +287,8 @@ local function normalize_change_id(change)
   return change
 end
 
+-- Parse the changelist identifier reported by one opened-file line.
+-- 解析由打开的文件行报告的更改列表标识符。
 local function parse_opened_change(line, fallback)
   local change = line:match("%-%s+%S+%s+change%s+(%d+)")
       or line:match("%-%s+%S+%s+(%d+)%s+change")
@@ -249,6 +297,8 @@ local function parse_opened_change(line, fallback)
   return normalize_change_id(change)
 end
 
+-- Parse describe output into a structured changelist detail table.
+-- 将描述输出解析为结构化变更列表详细信息表。
 local function parse_describe_output(result, change_num, default_status)
   local detail = {
     number = tonumber(change_num),
@@ -325,16 +375,22 @@ local function parse_describe_output(result, change_num, default_status)
   return detail
 end
 
+-- Return the default Perforce pathspec for one project root.
+-- 返回一个项目根目录的默认 Perforce 路径规范。
 local function root_pathspec(root)
   return (root or "."):gsub("/", "\\") .. "\\..."
 end
 
+-- Join path segments with normalized separators.
+-- 使用标准化分隔符连接路径段。
 local function join_path(...)
   return table.concat(vim.tbl_map(function(part)
     return tostring(part or ""):gsub("[/\\]+$", ""):gsub("^[/\\]+", "")
   end, { ... }), "/")
 end
 
+-- Collect the project pathspecs that currently exist on disk.
+-- 收集磁盘上当前存在的项目路径规范。
 local function existing_pathspecs(root)
   if not root or root == "" then
     return { root_pathspec(root) }
@@ -343,6 +399,8 @@ local function existing_pathspecs(root)
   local specs = {}
   local normalized_root = root:gsub("[/\\]+$", "")
 
+  -- Add one directory pathspec when it exists in the project tree.
+  -- 如果项目目录树里存在该目录，则添加对应的目录 pathspec，同时避免扫描整个工作区。
   local function add_dir(relative)
     local path = join_path(normalized_root, relative)
     if vim.fn.isdirectory(path) == 1 then
@@ -350,6 +408,8 @@ local function existing_pathspecs(root)
     end
   end
 
+  -- Add one file to Perforce.
+  -- 将一个文件添加到 Perforce。
   local function add_file(path)
     if vim.fn.filereadable(path) == 1 then
       specs[#specs + 1] = win_path(path)
@@ -379,20 +439,27 @@ local function existing_pathspecs(root)
   end
 
   if #specs == 0 then
+    -- Fall back to the broad project root only when none of the expected roots exist.
     specs[#specs + 1] = root_pathspec(root)
   end
 
   return specs
 end
 
+-- Normalize one filesystem path to forward-slash form.
+-- 将一个文件系统路径规范为正斜杠形式。
 local function normalize_path(path)
   return tostring(path or ""):gsub("\\", "/")
 end
 
+-- Return whether one path already uses Perforce depot syntax.
+-- 返回一个路径是否已使用 Perforce depot 语法。
 local function is_depot_path(path)
   return type(path) == "string" and path:match("^//") ~= nil
 end
 
+-- Return whether one path resolves to a real local file under the project root.
+-- 返回一个路径是否解析为项目根目录下的真实本地文件。
 local function is_real_local_path(path, root)
   path = tostring(path or "")
   if not path or path == "" or path == "0" or path:match("[/\\]0$") then
@@ -420,6 +487,8 @@ local function is_real_local_path(path, root)
   return root ~= nil and not normalized:match("^%.%.")
 end
 
+-- Return whether one path belongs to the active project and can be managed by Perforce.
+-- 返回一个路径是否属于活动项目并且可以由 Perforce 管理。
 function M.is_project_file(path, root)
   return is_real_local_path(path, root)
 end
@@ -466,6 +535,8 @@ local RECONCILE_EXCLUDED_PATTERNS = {
   "%.user$",
 }
 
+-- Return one project-relative path for the provided file.
+-- 返回所提供文件的一个项目相对路径。
 local function relative_project_path(path, root)
   if not root then return nil end
   local normalized_root = normalize_path(root):lower():gsub("/+$", "")
@@ -480,6 +551,8 @@ local function relative_project_path(path, root)
   return normalized_path:sub(#normalized_root + 2)
 end
 
+-- Return whether one reconcile result should stay visible in the dashboard.
+-- 返回一项协调结果是否应在仪表板中保持可见。
 local function should_keep_reconcile_file(path, root)
   if not is_real_local_path(path, root) then
     return false
@@ -511,6 +584,8 @@ local function should_keep_reconcile_file(path, root)
   return true
 end
 
+-- Normalize one local file path returned by Perforce.
+-- 标准化 Perforce 返回的一个本地文件路径。
 function M.normalize_local_file(path, root)
   path = sanitize(path)
   if not is_real_local_path(path, root) then
@@ -525,6 +600,8 @@ function M.normalize_local_file(path, root)
   return (root:gsub("[/\\]+$", "") .. "/" .. path):gsub("/", "\\")
 end
 
+-- Resolve the best local filesystem path for one reconcile status line.
+-- 解析一个协调状态行的最佳本地文件系统路径。
 local function resolve_local_status_path(path, root)
   path = vim.trim(tostring(path or "")):gsub("#%d+$", "")
   if not is_real_local_path(path, root) then
@@ -536,6 +613,8 @@ local function resolve_local_status_path(path, root)
   return (root:gsub("[/\\]+$", "") .. "/" .. path):gsub("/", "\\")
 end
 
+-- Translate raw reconcile text into the dashboard action label.
+-- 把原始 reconcile 文本转换成仪表盘使用的动作标签。
 local function reconcile_action_from_text(text)
   text = tostring(text or ""):lower()
   if text:find("edit", 1, true) then
@@ -550,6 +629,8 @@ local function reconcile_action_from_text(text)
   return "reconcile"
 end
 
+-- Parse reconcile preview output into local file change entries.
+-- 将协调预览输出解析为本地文件更改条目。
 local function parse_reconcile_output(result, root)
   local files = {}
   for line in tostring(result or ""):gmatch("[^\r\n]+") do
@@ -581,6 +662,8 @@ local function parse_reconcile_output(result, root)
   return files
 end
 
+-- Run a reconcile preview for one project root with the provided flags.
+-- 使用提供的标志对一个项目根运行协调预览。
 local function reconcile_preview(root, flags)
   local args = {"-n"}
   for _, flag in ipairs(flags or {}) do
@@ -594,6 +677,8 @@ local function reconcile_preview(root, flags)
   return parsed, stdout, stderr, code
 end
 
+-- Run a reconcile preview asynchronously for one project root.
+-- 为一个项目根异步运行协调预览。
 local function reconcile_preview_async(root, flags, cb)
   local args = {"-n"}
   for _, flag in ipairs(flags or {}) do
@@ -608,6 +693,8 @@ local function reconcile_preview_async(root, flags, cb)
   end)
 end
 
+-- Normalize one async vim.system result before invoking the callback.
+-- 在调用回调之前标准化一个异步 vim.system 结果。
 local function async_result(cmd, cb)
   return function(result)
     vim.schedule(function()
@@ -619,6 +706,8 @@ local function async_result(cmd, cb)
   end
 end
 
+-- Run one command asynchronously with the configured Perforce environment.
+-- 使用已配置的 Perforce 环境异步运行一个命令。
 function M.system_async(cmd, stdin, cb)
   local opts = apply_env({ text = true })
   if stdin then
@@ -627,6 +716,8 @@ function M.system_async(cmd, stdin, cb)
   vim.system(cmd, opts, async_result(cmd, cb))
 end
 
+-- Run one command synchronously with the configured Perforce environment.
+-- 与配置的 Perforce 环境同步运行一个命令。
 function M.system(cmd)
   local env = M.build_env()
   if next(env) == nil then
@@ -645,6 +736,8 @@ function M.system(cmd)
   return result
 end
 
+-- Run one command synchronously and return parsed success and error text.
+-- 同步运行一个命令并返回解析的成功和错误文本。
 function M.system_err(cmd, stdin)
   local opts = { text = true }
   if stdin then opts.stdin = stdin end
@@ -662,6 +755,8 @@ function M.system_err(cmd, stdin)
   return r.stdout or "", r.stderr or "", r.code
 end
 
+-- Detect whether Perforce is available for one project root.
+-- 检测 Perforce 是否可用于一个项目根目录。
 function M.detect(root)
   if not executable(config.values.vcs.p4.command or "p4") then
     return false
@@ -670,6 +765,8 @@ function M.detect(root)
   return vim.v.shell_error == 0
 end
 
+-- Return parsed `p4 info` data for one project root.
+-- 返回一个项目根的解析后的“p4 info”数据。
 function M.info(root)
   local result = M.system(M.p4_cmd("info", {"-s"}))
   if vim.v.shell_error ~= 0 then
@@ -678,6 +775,8 @@ function M.info(root)
   return parse_info(result), nil
 end
 
+-- Return the Perforce client root reported by `p4 info`.
+-- 返回“p4 info”报告的 Perforce 客户端根目录。
 function M.client_root()
   local info, err = M.info()
   if not info then
@@ -686,6 +785,8 @@ function M.client_root()
   return info["client root"], nil
 end
 
+-- Return whether one path is already opened in Perforce.
+-- 返回一条路径是否已在 Perforce 中打开。
 function M.is_opened(path)
   path = sanitize(path)
   local result = M.system(M.p4_cmd("opened", {win_path(path)}))
@@ -706,6 +807,8 @@ function M.is_opened(path)
   return false
 end
 
+-- Return the files currently opened in Perforce for one project root.
+-- 返回当前在 Perforce 中为一个项目根打开的文件。
 function M.opened(root)
   local args = {}
   if root then
@@ -735,6 +838,8 @@ function M.opened(root)
   return files
 end
 
+-- Return local reconcile status entries for one project root.
+-- 返回一个项目根的本地协调状态条目。
 function M.status(root)
   local files, _stdout, _stderr, code = reconcile_preview(root, {"-a", "-d"})
   if code ~= 0 then
@@ -743,6 +848,8 @@ function M.status(root)
   return files
 end
 
+-- Check out one file in Perforce.
+-- 在 Perforce 中查看一个文件。
 function M.checkout(path, root)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, root)
@@ -761,6 +868,8 @@ function M.checkout(path, root)
   end)
 end
 
+-- Run an asynchronous Perforce login flow.
+-- 以异步方式执行一次 Perforce 登录流程。
 function M.login_async(callback)
   prompt_secret_input_async("P4 password", "", function(password)
     if not password or password == "" then
@@ -778,6 +887,8 @@ function M.login_async(callback)
   end)
 end
 
+-- Ensure an async Perforce session is logged in before continuing.
+-- 确保异步 Perforce 会话已登录，然后再继续。
 function M.ensure_login_async(callback)
   M.system_async(M.p4_cmd("login", {"-s"}), nil, function(stdout, stderr, code)
     if code == 0 then
@@ -788,6 +899,8 @@ function M.ensure_login_async(callback)
   end)
 end
 
+-- Check out one file asynchronously through Perforce.
+-- 通过 Perforce 异步检出一个文件。
 function M.checkout_async(path, root, callback)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, root)
@@ -800,6 +913,8 @@ function M.checkout_async(path, root, callback)
     return
   end
 
+  -- Run one checkout attempt and optionally retry after login.
+  -- 运行一次结帐尝试，并可选择在登录后重试。
   local function edit_once(retried)
     M.system_async(M.p4_cmd("edit", {win_path(path)}), nil, function(stdout, stderr, code)
       if code == 0 then
@@ -832,6 +947,8 @@ function M.checkout_async(path, root, callback)
   end)
 end
 
+-- Return diff output for one file from Perforce.
+-- 从 Perforce 返回一个文件的差异输出。
 function M.diff(path, root)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, root)
@@ -848,6 +965,8 @@ function M.diff(path, root)
   return result, nil
 end
 
+-- Translate one depot path into the corresponding local client path.
+-- 将一个软件仓库路径转换为相应的本地客户端路径。
 function M.depot_to_local(depot_file)
   if not is_depot_path(depot_file) then
     return nil
@@ -865,6 +984,8 @@ function M.depot_to_local(depot_file)
   return nil
 end
 
+-- Make one file writable without necessarily opening it in Perforce.
+-- 使一个文件可写，而不必在 Perforce 中打开它。
 function M.make_writable(path)
   if vim.fn.has("win32") == 1 then
     vim.fn.system({"attrib", "-R", win_path(path)})
@@ -874,6 +995,8 @@ function M.make_writable(path)
   return vim.v.shell_error == 0
 end
 
+-- Create a new Perforce changelist with the provided description.
+-- 使用提供的描述创建新的 Perforce 变更列表。
 function M.create_changelist(description)
   local change_num
   local ok, err = run_with_login_retry(function()
@@ -900,6 +1023,8 @@ function M.create_changelist(description)
   return tonumber(change_num), nil
 end
 
+-- Move one file into the requested Perforce changelist.
+-- 将一个文件移至请求的 Perforce 更改列表中。
 function M.reopen_file(path, change_num)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, nil)
@@ -915,6 +1040,8 @@ function M.reopen_file(path, change_num)
   end)
 end
 
+-- Submit one Perforce changelist.
+-- 提交一份 Perforce 变更列表。
 function M.submit_changelist(change_num)
   return run_with_login_retry(function()
     local stdout, stderr, code = M.system_err(M.p4_cmd("submit", {"-c", tostring(change_num)}))
@@ -925,6 +1052,8 @@ function M.submit_changelist(change_num)
   end)
 end
 
+-- Submit the provided files and message through Perforce.
+-- 通过 Perforce 提交提供的文件和消息。
 function M.commit(root, files, message, opts)
   local change_num, err = M.create_changelist(message)
   if not change_num then
@@ -955,6 +1084,8 @@ function M.commit(root, files, message, opts)
   return true, result
 end
 
+-- Revert one file in Perforce.
+-- 在 Perforce 中恢复一个文件。
 function M.do_revert(path, root)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, root)
@@ -973,6 +1104,8 @@ function M.do_revert(path, root)
   end)
 end
 
+-- Add one file to Perforce.
+-- 将一个文件添加到 Perforce。
 function M.add_file(path, root)
   path = sanitize(path)
   local suspicious = is_suspicious_file_arg(path, root)
@@ -991,6 +1124,8 @@ function M.add_file(path, root)
   end)
 end
 
+-- Return parsed detail data for one pending changelist.
+-- 返回一个待处理变更列表的已解析详细数据。
 function M.changelist_detail(change_num)
   local result = M.system(M.p4_cmd("describe", {"-s", tostring(change_num)}))
   if vim.v.shell_error ~= 0 then
@@ -999,11 +1134,15 @@ function M.changelist_detail(change_num)
   return parse_describe_output(result, change_num, ""), nil
 end
 
+-- Return whether the current Perforce session requires login.
+-- 返回当前 Perforce 会话是否需要登录。
 function M.needs_login()
   local result = M.system(M.p4_cmd("login", {"-s"}))
   return vim.v.shell_error ~= 0
 end
 
+-- Run a synchronous Perforce login flow.
+-- 以同步方式执行一次 Perforce 登录流程。
 function M.login(password)
   local pwd = password
   if not pwd then
@@ -1020,6 +1159,8 @@ function M.login(password)
   return true, nil
 end
 
+-- Return shelved changelists visible from one project root.
+-- 返回从一个项目根目录可见的搁置变更列表。
 function M.shelved_changelists(root)
   local info = M.info()
   local user = info and info["user name"]
@@ -1038,11 +1179,15 @@ function M.shelved_changelists(root)
   return changes
 end
 
+-- Return pending changelists visible from one project root.
+-- 返回从一个项目根可见的待定变更列表。
 function M.pending_changelists(root)
   local info = M.info()
   return M.pending_changelists_with_info(root, info)
 end
 
+-- Return pending changelists using pre-fetched `p4 info` data.
+-- 使用预取的“p4 info”数据返回挂起的更改列表。
 function M.pending_changelists_with_info(root, info)
   local client = info and info["client name"]
   local user = info and info["user name"]
@@ -1065,12 +1210,16 @@ function M.pending_changelists_with_info(root, info)
   return parse_changes(result)
 end
 
+-- Return whether the current buffer session is running with allwrite enabled.
+-- 返回当前缓冲区会话是否在启用 allwrite 的情况下运行。
 local function allwrite_enabled()
   local result = M.system(M.p4_cmd("client", {"-o"}))
   if vim.v.shell_error ~= 0 then return false end
   return result:match("allwrite") and not result:match("noallwrite")
 end
 
+-- Return writable project files that are not opened in Perforce.
+-- 返回未在 Perforce 中打开的可写项目文件。
 function M.writable_unopened(root)
   if not root then return {} end
   if allwrite_enabled() then return {} end
@@ -1091,6 +1240,8 @@ function M.writable_unopened(root)
   return writable
 end
 
+-- Return writable unopened project files asynchronously.
+-- 异步返回可写的未打开的项目文件。
 function M.writable_unopened_async(root, cb)
   reconcile_preview_async(root, {"-e"}, function(files, stdout, stderr, code)
     if code ~= 0 then
@@ -1113,6 +1264,8 @@ function M.writable_unopened_async(root, cb)
   end)
 end
 
+-- Return parsed detail data for one shelved changelist.
+-- 返回一个搁置变更列表的已解析详细数据。
 function M.shelved_detail(change_num)
   local result = M.system(M.p4_cmd("describe", {"-S", tostring(change_num)}))
   if vim.v.shell_error ~= 0 then
@@ -1121,6 +1274,8 @@ function M.shelved_detail(change_num)
   return parse_describe_output(result, change_num, "shelved"), nil
 end
 
+-- Load `p4 info` data asynchronously.
+-- 异步加载`p4 info`数据。
 function M.info_async(cb)
   M.system_async(M.p4_cmd("info", {"-s"}), nil, function(stdout, stderr, code)
     if code ~= 0 then
@@ -1131,6 +1286,8 @@ function M.info_async(cb)
   end)
 end
 
+-- Load opened-file data asynchronously for one project root.
+-- 为一个项目根异步加载打开的文件数据。
 function M.opened_async(root, cb)
   local path = root and root_pathspec(root) or nil
   local args = {"-F", "%clientFile%|%action%|%depotFile%|%change%", "opened"}
@@ -1175,6 +1332,8 @@ function M.opened_async(root, cb)
   end)
 end
 
+-- Load local reconcile status asynchronously for one project root.
+-- 异步加载一个项目根的本地协调状态。
 function M.status_async(root, cb)
   reconcile_preview_async(root, {"-a", "-d"}, function(parsed, stdout, stderr, code)
     if code ~= 0 then
@@ -1186,6 +1345,8 @@ function M.status_async(root, cb)
   end)
 end
 
+-- Load pending changelists asynchronously for one project root.
+-- 为一个项目根异步加载挂起的变更列表。
 function M.pending_changelists_async(root, cb)
   M.info_async(function(info, err)
     if err then
@@ -1196,6 +1357,8 @@ function M.pending_changelists_async(root, cb)
   end)
 end
 
+-- Load shelved changelists asynchronously for one project root.
+-- 为一个项目根异步加载搁置的变更列表。
 function M.shelved_changelists_async(root, cb)
   M.info_async(function(info, err)
     if err then
@@ -1206,6 +1369,8 @@ function M.shelved_changelists_async(root, cb)
   end)
 end
 
+-- Load pending changelists asynchronously using pre-fetched info data.
+-- 使用预取的信息数据异步加载挂起的更改列表。
 function M.pending_changelists_with_info_async(root, info, cb)
   local client = info and info["client name"]
   local user = info and info["user name"]
@@ -1230,6 +1395,8 @@ function M.pending_changelists_with_info_async(root, info, cb)
   end)
 end
 
+-- Load shelved changelists asynchronously using pre-fetched info data.
+-- 使用预取的信息数据异步加载搁置的变更列表。
 function M.shelved_changelists_with_info_async(root, info, cb)
   local user = info and info["user name"]
   local args = user and {"-s", "shelved", "-u", user} or {"-s", "shelved"}
@@ -1253,6 +1420,8 @@ function M.shelved_changelists_with_info_async(root, info, cb)
   end)
 end
 
+-- Load diff output asynchronously for one file.
+-- 异步加载一个文件的 diff 输出。
 function M.diff_async(path, root, cb)
   if type(root) == "function" then
     local old_cb = root
@@ -1285,6 +1454,8 @@ function M.diff_async(path, root, cb)
   end)
 end
 
+-- Load pending changelist detail asynchronously.
+-- 异步加载挂起的变更列表详细信息。
 function M.changelist_detail_async(change_num, cb)
   M.system_async(M.p4_cmd("describe", {"-s", tostring(change_num)}), nil, function(stdout, stderr, code)
     if code ~= 0 then
@@ -1296,6 +1467,8 @@ function M.changelist_detail_async(change_num, cb)
   end)
 end
 
+-- Load shelved changelist detail asynchronously.
+-- 异步加载搁置的变更列表详细信息。
 function M.shelved_detail_async(change_num, cb)
   M.system_async(M.p4_cmd("describe", {"-S", tostring(change_num)}), nil, function(stdout, stderr, code)
     if code ~= 0 then

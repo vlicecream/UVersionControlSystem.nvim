@@ -1,3 +1,9 @@
+-- Author: Ame林汀
+-- Website: vlicecream.github.io
+-- File: lua/uvcs/readonly.lua
+-- Purpose: Prompt for checkout when editing Perforce-controlled read-only files.
+-- License: MIT
+
 local config = require("uvcs.config")
 local vcs = require("uvcs")
 
@@ -6,6 +12,8 @@ local M = {}
 local group_name = "UVCSReadonlySave"
 local preflight_keys = { "i", "I", "a", "A", "o", "O", "s", "S", "c", "C" }
 
+-- Refresh the UVCS dashboard when readonly state changes may affect it.
+-- 当只读状态更改可能影响 UVCS 仪表板时，刷新 UVCS 仪表板。
 local function refresh_dashboard()
   vim.schedule(function()
     local ok_m, dashboard = pcall(require, "uvcs.dashboard")
@@ -15,6 +23,8 @@ local function refresh_dashboard()
   end)
 end
 
+-- Prompt for the action that should happen when a read-only file is edited.
+-- 提示编辑只读文件时应执行的操作。
 local function prompt_readonly_file(path, action_label)
   local fname = vim.fn.fnamemodify(path, ":t")
   return vim.fn.confirm(
@@ -25,6 +35,8 @@ local function prompt_readonly_file(path, action_label)
   )
 end
 
+-- Apply the selected readonly-handling choice for one buffer and path.
+-- 将选定的只读处理选项应用于一个缓冲区和路径。
 local function apply_readonly_choice(buf, path, choice, project_root, already_opened)
   if choice == 1 then
     local p4 = require("uvcs.p4")
@@ -57,6 +69,8 @@ local function apply_readonly_choice(buf, path, choice, project_root, already_op
   return false
 end
 
+-- Make a file writable when Perforce already has it opened.
+-- 当 Perforce 已经打开该文件时，把它切换为可写状态。
 local function make_already_opened_writable(buf, path)
   local p4 = require("uvcs.p4")
   p4.make_writable(path)
@@ -65,6 +79,8 @@ local function make_already_opened_writable(buf, path)
   refresh_dashboard()
 end
 
+-- Return whether UVCS should intercept edits to one read-only file.
+-- 返回 UVCS 是否应拦截对一个只读文件的编辑。
 local function should_prompt_for_readonly(buf, path)
   if vim.bo[buf].buftype ~= "" or path == "" then
     return false, nil
@@ -90,11 +106,15 @@ local function should_prompt_for_readonly(buf, path)
   return true, project_root, already_opened
 end
 
+-- Feed one normal-mode key back into Neovim after readonly interception.
+-- 只读拦截后，将一个正常模式密钥反馈回 Neovim。
 local function feed_normal_key(key)
   local term = vim.api.nvim_replace_termcodes(key, true, false, true)
   vim.api.nvim_feedkeys(term, "n", false)
 end
 
+-- Register readonly interception autocmds and key handlers.
+-- 注册只读拦截自动命令和按键处理程序。
 function M.setup()
   local vcs_config = config.values.vcs or {}
   if vcs_config.enable == false or vcs_config.prompt_on_readonly_save == false then
@@ -203,6 +223,8 @@ function M.setup()
   })
 end
 
+-- Remove readonly interception autocmds and clear transient state.
+-- 移除只读拦截相关的 autocmd，并清理临时状态。
 function M.reset()
   pcall(vim.api.nvim_del_augroup_by_name, group_name)
   vim.g.uvcs_readonly_preflight_keymaps = nil
