@@ -220,12 +220,6 @@ local function section_count(section)
   return "0"
 end
 
--- Return the display count text for one dashboard section.
--- 返回一个仪表板部分的显示计数文本。
-local function count_section(section)
-  return section_count(section)
-end
-
 -- Return whether one dashboard row can be selected.
 -- 返回是否可以选择仪表板的某一行。
 local function is_selectable(row)
@@ -248,6 +242,8 @@ local function normalize_change_id(change)
   return lowered:match("^change%s+(%d+)$") or lowered:match("^(%d+)%s+change$") or change
 end
 
+-- Group opened files by normalized changelist identifier.
+-- 按规范化后的 changelist 标识分组已打开文件。
 group_opened_by_changelist = function(opened)
   local groups = {}
   for _, file in ipairs(opened or {}) do
